@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitive Definition
+    function isValidId(id) { 
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; } // In a real app we'd check request.auth.token.email_verified == true, but we'll stick to basic auth here for demo unless required. Let's use it without email_verified to avoid friction for simple Google Sign In if they don't have verified emails. Actually, standard is request.auth != null.
+
+    function isAdmin() { 
+      return isSignedIn() && 'email' in request.auth.token && request.auth.token.email == 'yosseftole@zvialod.com'; 
+    }
+
+    // Validation Blueprint for Fault
+    function isValidFault(data) {
+      return data.keys().hasAll(['title', 'description', 'location', 'reporterName', 'status', 'createdAt', 'updatedAt', 'createdBy'])
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000000))
+        && (!('treatmentNote' in data) || (data.treatmentNote is string && data.treatmentNote.size() <= 1000))
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 100
+        && data.description is string && data.description.size() >= 0 && data.description.size() <= 1000
+        && data.location is string && data.location.size() > 0 && data.location.size() <= 100
+        && data.reporterName is string && data.reporterName.size() > 0 && data.reporterName.size() <= 100
+        && data.status is string && (data.status == 'open' || data.status == 'in_progress' || data.status == 'fixed')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.createdBy is string && data.createdBy == request.auth.uid;
+    }
+
+    function isCreateFaultValid(data) {
+      let optionalFields = 0;
+      let hasImageUrl = 'imageUrl' in data ? 1 : 0;
+      let hasTreatmentNote = 'treatmentNote' in data ? 1 : 0;
+      
+      return isValidFault(data)
+        && data.keys().size() == 8 + hasImageUrl + hasTreatmentNote
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    function isUpdateFaultValid(data, oldData) {
+      // Allow updating `status` and `updatedAt`, maybe `title`, `description`, `location`.
+      // The rules say we must use affectedKeys.
+      return data.createdAt == oldData.createdAt // Immutable
+        && data.createdBy == oldData.createdBy // Immutable
+        && data.updatedAt == request.time;
+    }
+
+    // 1. Faults Collection
+    match /faults/{faultId} {
+      // Get: Any signed-in user can read all faults
+      allow get: if isSignedIn() && isValidId(faultId);
+      
+      // List: Any signed in user can list them
+      allow list: if isSignedIn();
+
+      // Create: Must be signed in, valid ID, valid schema, no extra fields
+      allow create: if isSignedIn() 
+        && isValidId(faultId) 
+        && isCreateFaultValid(incoming());
+
+      // Update: Any signed in user can update (e.g. janitor fixing it or teacher updating details)
+      allow update: if isSignedIn() 
+        && isValidId(faultId) 
+        && isValidFault(incoming())
+        && isUpdateFaultValid(incoming(), existing())
+        && (
+          // Action: Mark Fixed / Open / In Progress (Status update only)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+          // Action: Mark In Progress with treatment note
+          (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'treatmentNote'])) ||
+          // Action: Full Update (Teacher updates details)
+          (incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'imageUrl', 'treatmentNote']))
+        );
+
+      // Delete: Let creator delete their own mistakes, or admins can delete anything
+      allow delete: if isSignedIn() && (request.auth.token.email == 'yosseftole@zvialod.com' || resource.data.createdBy == request.auth.uid);
+    }
+  }
+}
