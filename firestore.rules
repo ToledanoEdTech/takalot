@@ -19,7 +19,7 @@ service cloud.firestore {
     }
 
     // Validation Blueprint for Fault
-    function isValidFault(data) {
+    function isValidFaultFields(data) {
       return data.keys().hasAll(['title', 'description', 'location', 'reporterName', 'status', 'createdAt', 'updatedAt', 'createdBy'])
         && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000000))
         && (!('treatmentNote' in data) || (data.treatmentNote is string && data.treatmentNote.size() <= 1000))
@@ -30,26 +30,42 @@ service cloud.firestore {
         && data.status is string && (data.status == 'open' || data.status == 'in_progress' || data.status == 'fixed')
         && data.createdAt is timestamp
         && data.updatedAt is timestamp
-        && data.createdBy is string && data.createdBy == request.auth.uid;
+        && data.createdBy is string;
     }
 
     function isCreateFaultValid(data) {
-      let optionalFields = 0;
       let hasImageUrl = 'imageUrl' in data ? 1 : 0;
       let hasTreatmentNote = 'treatmentNote' in data ? 1 : 0;
       
-      return isValidFault(data)
+      return isValidFaultFields(data)
+        && data.createdBy == request.auth.uid
         && data.keys().size() == 8 + hasImageUrl + hasTreatmentNote
         && data.createdAt == request.time
         && data.updatedAt == request.time;
     }
 
+    function isValidStatus(status) {
+      return status is string && (status == 'open' || status == 'in_progress' || status == 'fixed');
+    }
+
     function isUpdateFaultValid(data, oldData) {
-      // Allow updating `status` and `updatedAt`, maybe `title`, `description`, `location`.
-      // The rules say we must use affectedKeys.
-      return data.createdAt == oldData.createdAt // Immutable
-        && data.createdBy == oldData.createdBy // Immutable
+      return data.createdAt == oldData.createdAt
+        && data.createdBy == oldData.createdBy
         && data.updatedAt == request.time;
+    }
+
+    function isStatusOnlyUpdate() {
+      return incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+    }
+
+    function isTreatmentUpdate() {
+      return incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'treatmentNote'])
+        && incoming().status == 'in_progress'
+        && (!('treatmentNote' in incoming()) || (incoming().treatmentNote is string && incoming().treatmentNote.size() <= 1000));
+    }
+
+    function isDetailsUpdate() {
+      return incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'imageUrl', 'treatmentNote']);
     }
 
     // 1. Faults Collection
@@ -65,18 +81,14 @@ service cloud.firestore {
         && isValidId(faultId) 
         && isCreateFaultValid(incoming());
 
-      // Update: Any signed in user can update (e.g. janitor fixing it or teacher updating details)
+      // Update: Any signed in user can update status or details
       allow update: if isSignedIn() 
         && isValidId(faultId) 
-        && isValidFault(incoming())
         && isUpdateFaultValid(incoming(), existing())
         && (
-          // Action: Mark Fixed / Open / In Progress (Status update only)
-          (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
-          // Action: Mark In Progress with treatment note
-          (incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'treatmentNote'])) ||
-          // Action: Full Update (Teacher updates details)
-          (incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'imageUrl', 'treatmentNote']))
+          (isStatusOnlyUpdate() && isValidStatus(incoming().status)) ||
+          (isTreatmentUpdate() && isValidStatus(incoming().status)) ||
+          (isDetailsUpdate() && isValidFaultFields(incoming()))
         );
 
       // Delete: Let creator delete their own mistakes, or admins can delete anything

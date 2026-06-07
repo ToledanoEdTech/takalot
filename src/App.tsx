@@ -53,16 +53,12 @@ function Dashboard() {
     const openCount = faults.filter(f => f.status === 'open').length;
     const inProgressCount = faults.filter(f => f.status === 'in_progress').length;
     
-    const now = new Date();
-    const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const fixedThisWeek = faults.filter(f => 
-      f.status === 'fixed' && f.updatedAt && f.updatedAt.toDate() > oneWeekAgo
-    ).length;
+    const fixedCount = faults.filter(f => f.status === 'fixed').length;
 
     return {
       openCount,
       inProgressCount,
-      fixedThisWeek
+      fixedCount
     };
   }, [faults]);
 
@@ -151,8 +147,8 @@ function Dashboard() {
                 <p className="text-xl sm:text-2xl font-black text-amber-800">{stats.inProgressCount}</p>
               </div>
               <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl">
-                <p className="text-[10px] sm:text-xs text-emerald-700 font-bold shrink-0">טופלו השבוע</p>
-                <p className="text-xl sm:text-2xl font-black text-emerald-800">{stats.fixedThisWeek}</p>
+                <p className="text-[10px] sm:text-xs text-emerald-700 font-bold shrink-0">טופלו</p>
+                <p className="text-xl sm:text-2xl font-black text-emerald-800">{stats.fixedCount}</p>
               </div>
             </div>
           </div>

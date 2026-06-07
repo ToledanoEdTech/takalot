@@ -18,10 +18,13 @@ export function FaultList({ faults, loading }: FaultListProps) {
   const [treatmentModalActiveFor, setTreatmentModalActiveFor] = useState<Fault | null>(null);
   const [treatmentText, setTreatmentText] = useState('');
   const [savingTreatment, setSavingTreatment] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
 
   const handleToggleStatus = async (fault: Fault) => {
+    if (togglingId) return;
+    setTogglingId(fault.id);
     try {
-      // If it's fixed, bring back to open. If open/in_progress, move to fixed.
       const newStatus: FaultStatus = fault.status === 'fixed' ? 'open' : 'fixed';
       const faultRef = doc(db, 'faults', fault.id);
       await updateDoc(faultRef, {
@@ -29,7 +32,10 @@ export function FaultList({ faults, loading }: FaultListProps) {
         updatedAt: serverTimestamp()
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `faults/${fault.id}`);
+      console.error('Failed to update fault status:', error);
+      alert('לא ניתן לעדכן את סטטוס התקלה. נסו שוב.');
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -158,9 +164,14 @@ export function FaultList({ faults, loading }: FaultListProps) {
               )}
 
               {fault.imageUrl && (
-                <div className="mb-4 rounded-xl overflow-hidden border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setExpandedImageUrl(fault.imageUrl!)}
+                  className="mb-4 rounded-xl overflow-hidden border border-slate-200 w-full cursor-zoom-in hover:opacity-90 transition-opacity"
+                  title="לחצו להגדלה"
+                >
                   <img src={fault.imageUrl} alt="תמונה של התקלה" className="w-full h-32 object-cover" />
-                </div>
+                </button>
               )}
               <div className="flex items-center gap-2 mb-6 mt-auto pt-2 flex-wrap">
                 <div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0">
@@ -188,13 +199,18 @@ export function FaultList({ faults, loading }: FaultListProps) {
                 )}
                 <button
                   onClick={() => handleToggleStatus(fault)}
-                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-colors ${
+                  disabled={togglingId === fault.id}
+                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                     fault.status === 'open' || fault.status === 'in_progress'
                       ? 'bg-emerald-500 text-white hover:bg-emerald-600' 
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  {fault.status === 'fixed' ? 'החזר לפעיל' : 'סמן כבוצע'}
+                  {togglingId === fault.id ? (
+                    <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
+                  ) : (
+                    fault.status === 'fixed' ? 'החזר לפעיל' : 'סמן כבוצע'
+                  )}
                 </button>
                 <button
                   onClick={() => handleDelete(fault.id)}
@@ -210,6 +226,29 @@ export function FaultList({ faults, loading }: FaultListProps) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Image Lightbox */}
+      {expandedImageUrl && (
+        <div
+          className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
+          onClick={() => setExpandedImageUrl(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setExpandedImageUrl(null)}
+            className="absolute top-4 left-4 p-2 text-white/80 hover:text-white rounded-full hover:bg-white/10 transition-colors"
+            title="סגירה"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          <img
+            src={expandedImageUrl}
+            alt="תמונה של התקלה"
+            className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 
