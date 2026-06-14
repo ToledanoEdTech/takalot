@@ -1,20 +1,56 @@
 import React, { useState } from 'react';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { collection, updateDoc, deleteDoc, doc, writeBatch } from 'firebase/firestore';
-import { Fault } from '../types';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  writeBatch,
+  Timestamp,
+} from 'firebase/firestore';
+import { Fault, ARCHIVE_DAYS } from '../types';
 import * as XLSX from 'xlsx';
-import { FileSpreadsheet, Trash2, ShieldAlert, ImageMinus, Loader2 } from 'lucide-react';
+import { FileSpreadsheet, Trash2, ShieldAlert, Loader2 } from 'lucide-react';
 
 interface AdminPanelProps {
-  faults: Fault[];
+  onDataChanged?: () => void;
 }
 
-export function AdminPanel({ faults }: AdminPanelProps) {
+async function deleteFaultsWithImages(faultIds: string[]) {
+  let batch = writeBatch(db);
+  let count = 0;
+
+  for (const faultId of faultIds) {
+    batch.delete(doc(db, 'faults', faultId));
+    batch.delete(doc(db, 'fault_images', faultId));
+    count++;
+
+    if (count % 450 === 0) {
+      await batch.commit();
+      batch = writeBatch(db);
+    }
+  }
+
+  if (count % 450 !== 0) {
+    await batch.commit();
+  }
+}
+
+export function AdminPanel({ onDataChanged }: AdminPanelProps) {
   const [loading, setLoading] = useState<string | null>(null);
 
-  const handleExportExcel = () => {
+  const handleExportExcel = async () => {
+    setLoading('export');
     try {
-      const dataToExport = faults.map(f => ({
+      const snapshot = await getDocs(collection(db, 'faults'));
+
+      const faults: Fault[] = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      })) as Fault[];
+
+      const dataToExport = faults.map((f) => ({
         'מספר מזהה': f.id,
         'כותרת': f.title,
         'תיאור': f.description,
@@ -24,29 +60,27 @@ export function AdminPanel({ faults }: AdminPanelProps) {
         'סטטוס': f.status === 'open' ? 'פעיל' : f.status === 'in_progress' ? 'בטיפול' : 'טופל',
         'תאריך דיווח': f.createdAt ? f.createdAt.toDate().toLocaleString('he-IL') : '',
         'תאריך עדכון אחרון': f.updatedAt ? f.updatedAt.toDate().toLocaleString('he-IL') : '',
-        'קיימת תמונה?': f.imageUrl ? 'כן' : 'לא'
+        'קיימת תמונה?': f.hasImage || f.imageUrl ? 'כן' : 'לא',
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(dataToExport);
-      
-      // Set right to left
+
       if (!worksheet['!views']) {
         worksheet['!views'] = [];
       }
       worksheet['!views'].push({ rightToLeft: true });
 
-      // Column widths
       worksheet['!cols'] = [
-        { wch: 15 }, // ID
-        { wch: 25 }, // Title
-        { wch: 40 }, // Description
-        { wch: 40 }, // Treatment Note
-        { wch: 15 }, // Location
-        { wch: 15 }, // Reporter
-        { wch: 10 }, // Status
-        { wch: 20 }, // Created At
-        { wch: 20 }, // Updated At
-        { wch: 10 }  // Has Image
+        { wch: 15 },
+        { wch: 25 },
+        { wch: 40 },
+        { wch: 40 },
+        { wch: 15 },
+        { wch: 15 },
+        { wch: 10 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 10 },
       ];
 
       const workbook = XLSX.utils.book_new();
@@ -55,77 +89,74 @@ export function AdminPanel({ faults }: AdminPanelProps) {
     } catch (e) {
       console.error('Export failed', e);
       alert('שגיאה ביצירת קובץ אקסל');
+    } finally {
+      setLoading(null);
     }
   };
 
   const handleDeleteFixed = async () => {
-    const fixedFaults = faults.filter(f => f.status === 'fixed');
-    if (fixedFaults.length === 0) {
-       alert('אין תקלות שטופלו למחיקה');
-       return;
-    }
-
-    if (!window.confirm(`האם למחוק לצמיתות את ${fixedFaults.length} התקלות שטופלו?`)) return;
-
     setLoading('delete_fixed');
     try {
-      const batch = writeBatch(db);
-      fixedFaults.forEach(f => {
-        batch.delete(doc(db, 'faults', f.id));
-      });
-      await batch.commit();
+      const snapshot = await getDocs(query(collection(db, 'faults'), where('status', '==', 'fixed')));
+      if (snapshot.empty) {
+        alert('אין תקלות שטופלו למחיקה');
+        return;
+      }
+
+      if (!window.confirm(`האם למחוק לצמיתות את ${snapshot.size} התקלות שטופלו (כולל תמונות)?`)) {
+        return;
+      }
+
+      await deleteFaultsWithImages(snapshot.docs.map((docSnap) => docSnap.id));
       alert('התקלות נמחקו בהצלחה');
-    } catch (error: any) {
-      alert('שגיאה במחיקת התקלות: ' + error?.message);
+      onDataChanged?.();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'שגיאה לא ידועה';
+      alert('שגיאה במחיקת התקלות: ' + message);
       try {
         handleFirestoreError(error, OperationType.DELETE, 'faults/*');
-      } catch (e) {}
+      } catch {
+        // handled above
+      }
     } finally {
       setLoading(null);
     }
   };
 
   const handleDeleteOld = async () => {
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-    const oldFaults = faults.filter(f => f.createdAt && f.createdAt.toDate() < thirtyDaysAgo);
-
-    if (oldFaults.length === 0) {
-      alert('אין תקלות ישנות מ-30 יום למחיקה');
-      return;
-    }
-
-    if (!window.confirm(`האם למחוק לצמיתות את ${oldFaults.length} התקלות הישנות? (פעולה זו בלתי הפיכה)`)) return;
-
     setLoading('delete_old');
     try {
-      // If there are many, we might need multiple batches, but usually a single batch allows 500 max.
-      // Assuming it's less than 500 for a school.
-      let batch = writeBatch(db);
-      let count = 0;
-      
-      for (const f of oldFaults) {
-        batch.delete(doc(db, 'faults', f.id));
-        count++;
-        
-        // Firestore batch max limit is 500 docs per batch
-        if (count % 450 === 0) {
-          await batch.commit();
-          batch = writeBatch(db);
-        }
-      }
-      
-      if (count % 450 !== 0) {
-        await batch.commit();
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - ARCHIVE_DAYS);
+
+      const snapshot = await getDocs(
+        query(
+          collection(db, 'faults'),
+          where('status', '==', 'fixed'),
+          where('updatedAt', '<', Timestamp.fromDate(cutoff))
+        )
+      );
+
+      if (snapshot.empty) {
+        alert(`אין תקלות "טופלו" ישנות מ-${ARCHIVE_DAYS} יום למחיקה`);
+        return;
       }
 
+      if (!window.confirm(`האם למחוק לצמיתות ${snapshot.size} תקלות "טופלו" מלפני ${ARCHIVE_DAYS} יום?`)) {
+        return;
+      }
+
+      await deleteFaultsWithImages(snapshot.docs.map((docSnap) => docSnap.id));
       alert('התקלות נמחקו בהצלחה');
-    } catch (error: any) {
-      alert('שגיאה במחיקת התקלות: ' + error?.message);
+      onDataChanged?.();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'שגיאה לא ידועה';
+      alert('שגיאה במחיקת התקלות: ' + message);
       try {
         handleFirestoreError(error, OperationType.DELETE, 'faults/*');
-      } catch (e) {}
+      } catch {
+        // handled above
+      }
     } finally {
       setLoading(null);
     }
@@ -144,9 +175,10 @@ export function AdminPanel({ faults }: AdminPanelProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <button
           onClick={handleExportExcel}
-          className="flex flex-col items-center justify-center gap-3 p-4 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-colors"
+          disabled={loading !== null}
+          className="flex flex-col items-center justify-center gap-3 p-4 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-xl transition-colors disabled:opacity-50"
         >
-          <FileSpreadsheet className="w-8 h-8 mb-1" />
+          {loading === 'export' ? <Loader2 className="w-8 h-8 mb-1 animate-spin" /> : <FileSpreadsheet className="w-8 h-8 mb-1" />}
           <span className="font-bold text-sm">הורדת דוח באקסל (Excel)</span>
           <span className="text-xs opacity-70">מסודר ומעוצב כולל כל הנתונים</span>
         </button>
@@ -158,7 +190,7 @@ export function AdminPanel({ faults }: AdminPanelProps) {
         >
           {loading === 'delete_fixed' ? <Loader2 className="w-8 h-8 mb-1 animate-spin" /> : <Trash2 className="w-8 h-8 mb-1" />}
           <span className="font-bold text-sm">מחיקת תקלות ש"טופלו"</span>
-          <span className="text-xs opacity-70">פינוי שטח ענן על ידי מחיקת דיווחים סגורים</span>
+          <span className="text-xs opacity-70">כולל מחיקת תמונות מהענן</span>
         </button>
 
         <button
@@ -167,8 +199,8 @@ export function AdminPanel({ faults }: AdminPanelProps) {
           className="flex flex-col items-center justify-center gap-3 p-4 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-xl transition-colors disabled:opacity-50"
         >
           {loading === 'delete_old' ? <Loader2 className="w-8 h-8 mb-1 animate-spin" /> : <Trash2 className="w-8 h-8 mb-1" />}
-          <span className="font-bold text-sm">מחיקת תקלות מעל 30 יום</span>
-          <span className="text-xs opacity-70">ניקוי היסטוריה ישנה לשחרור מקום רב</span>
+          <span className="font-bold text-sm">מחיקת "טופלו" מעל {ARCHIVE_DAYS} יום</span>
+          <span className="text-xs opacity-70">ניקוי היסטוריה ישנה לשחרור מקום</span>
         </button>
       </div>
     </div>

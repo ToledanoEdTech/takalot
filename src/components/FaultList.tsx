@@ -1,25 +1,131 @@
-import { useState } from 'react';
-import { doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useState, useEffect, useCallback } from 'react';
+import {
+  doc,
+  deleteDoc,
+  updateDoc,
+  serverTimestamp,
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  startAfter,
+  QueryDocumentSnapshot,
+  DocumentData,
+} from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { Fault, FaultStatus } from '../types';
-import { Trash2, Wrench, X } from 'lucide-react';
+import { deleteFaultImage, getFaultImage } from '../lib/faultImages';
+import { Fault, FaultStatus, FIXED_FAULTS_PAGE_SIZE } from '../types';
+import { Trash2, Wrench, X, ImageIcon, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 
 interface FaultListProps {
-  faults: Fault[];
+  activeFaults: Fault[];
   loading: boolean;
+  onStatsChange?: () => void;
 }
 
-export function FaultList({ faults, loading }: FaultListProps) {
+function faultHasImage(fault: Fault): boolean {
+  return fault.hasImage === true || !!fault.imageUrl;
+}
+
+export function FaultList({ activeFaults, loading, onStatsChange }: FaultListProps) {
   const [filter, setFilter] = useState<'all' | 'open' | 'in_progress' | 'fixed'>('all');
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  
+
+  const [fixedFaults, setFixedFaults] = useState<Fault[]>([]);
+  const [fixedLoading, setFixedLoading] = useState(false);
+  const [fixedLoadingMore, setFixedLoadingMore] = useState(false);
+  const [fixedLastDoc, setFixedLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
+  const [hasMoreFixed, setHasMoreFixed] = useState(false);
+  const [fixedLoaded, setFixedLoaded] = useState(false);
+
   const [treatmentModalActiveFor, setTreatmentModalActiveFor] = useState<Fault | null>(null);
   const [treatmentText, setTreatmentText] = useState('');
   const [savingTreatment, setSavingTreatment] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [loadingImageId, setLoadingImageId] = useState<string | null>(null);
+
+  const loadFixedFaults = useCallback(async (loadMore = false) => {
+    if (loadMore) {
+      setFixedLoadingMore(true);
+    } else {
+      setFixedLoading(true);
+    }
+
+    try {
+      const col = collection(db, 'faults');
+      const q = loadMore && fixedLastDoc
+        ? query(
+            col,
+            where('status', '==', 'fixed'),
+            orderBy('createdAt', 'desc'),
+            startAfter(fixedLastDoc),
+            limit(FIXED_FAULTS_PAGE_SIZE)
+          )
+        : query(
+            col,
+            where('status', '==', 'fixed'),
+            orderBy('createdAt', 'desc'),
+            limit(FIXED_FAULTS_PAGE_SIZE)
+          );
+
+      const snapshot = await getDocs(q);
+      const page: Fault[] = snapshot.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+      })) as Fault[];
+
+      setFixedFaults((prev) => (loadMore ? [...prev, ...page] : page));
+      setFixedLastDoc(snapshot.docs[snapshot.docs.length - 1] ?? null);
+      setHasMoreFixed(snapshot.docs.length === FIXED_FAULTS_PAGE_SIZE);
+      setFixedLoaded(true);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.LIST, 'faults/fixed');
+    } finally {
+      setFixedLoading(false);
+      setFixedLoadingMore(false);
+    }
+  }, [fixedLastDoc]);
+
+  useEffect(() => {
+    if (filter === 'fixed' && !fixedLoaded) {
+      loadFixedFaults(false);
+    }
+  }, [filter, fixedLoaded, loadFixedFaults]);
+
+  const handleViewImage = async (fault: Fault) => {
+    if (fault.imageUrl) {
+      setExpandedImageUrl(fault.imageUrl);
+      return;
+    }
+
+    if (imageCache[fault.id]) {
+      setExpandedImageUrl(imageCache[fault.id]);
+      return;
+    }
+
+    setLoadingImageId(fault.id);
+    try {
+      const dataUrl = await getFaultImage(fault.id);
+      if (!dataUrl) {
+        alert('לא נמצאה תמונה לתקלה זו.');
+        return;
+      }
+      setImageCache((prev) => ({ ...prev, [fault.id]: dataUrl }));
+      setExpandedImageUrl(dataUrl);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, `fault_images/${fault.id}`);
+      alert('לא ניתן לטעון את התמונה.');
+    } finally {
+      setLoadingImageId(null);
+    }
+  };
 
   const handleToggleStatus = async (fault: Fault) => {
     if (togglingId) return;
@@ -29,8 +135,18 @@ export function FaultList({ faults, loading }: FaultListProps) {
       const faultRef = doc(db, 'faults', fault.id);
       await updateDoc(faultRef, {
         status: newStatus,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
       });
+
+      if (newStatus === 'fixed') {
+        setFixedLoaded(false);
+        setFixedFaults([]);
+        setFixedLastDoc(null);
+      } else {
+        setFixedFaults((prev) => prev.filter((f) => f.id !== fault.id));
+      }
+
+      onStatsChange?.();
     } catch (error) {
       console.error('Failed to update fault status:', error);
       alert('לא ניתן לעדכן את סטטוס התקלה. נסו שוב.');
@@ -47,10 +163,11 @@ export function FaultList({ faults, loading }: FaultListProps) {
       await updateDoc(faultRef, {
         status: 'in_progress',
         treatmentNote: treatmentText,
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
       });
       setTreatmentModalActiveFor(null);
       setTreatmentText('');
+      onStatsChange?.();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `faults/${treatmentModalActiveFor.id}`);
     } finally {
@@ -58,71 +175,173 @@ export function FaultList({ faults, loading }: FaultListProps) {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (deletingId !== id) {
-      setDeletingId(id);
+  const handleDelete = async (fault: Fault) => {
+    if (deletingId !== fault.id) {
+      setDeletingId(fault.id);
       setTimeout(() => setDeletingId(null), 3000);
       return;
     }
-    
+
     try {
-      const faultRef = doc(db, 'faults', id);
-      await deleteDoc(faultRef);
+      await Promise.all([
+        deleteDoc(doc(db, 'faults', fault.id)),
+        deleteFaultImage(fault.id).catch(() => undefined),
+      ]);
+      setFixedFaults((prev) => prev.filter((f) => f.id !== fault.id));
       setDeletingId(null);
+      onStatsChange?.();
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `faults/${id}`);
+      handleFirestoreError(error, OperationType.DELETE, `faults/${fault.id}`);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center py-20 flex-1">
-        <div className="w-8 h-8 flex items-center justify-center border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
-      </div>
-    );
-  }
+  const isFixedView = filter === 'fixed';
+  const isLoading = isFixedView ? fixedLoading && !fixedLoaded : loading;
 
-  const filteredFaults = faults.filter(f => filter === 'all' || f.status === filter);
+  const filteredFaults = isFixedView
+    ? fixedFaults
+    : activeFaults.filter((f) => filter === 'all' || f.status === filter);
+
+  const renderFaultCard = (fault: Fault) => (
+    <div
+      key={fault.id}
+      className={`bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col hover:shadow-md transition-all h-fit ${fault.status === 'fixed' ? 'opacity-80' : ''}`}
+    >
+      <div className="flex justify-between items-start mb-4">
+        <span className={`px-2 py-1 text-[10px] font-bold rounded uppercase ${
+          fault.status === 'fixed' ? 'bg-emerald-100 text-emerald-700' :
+          fault.status === 'in_progress' ? 'bg-amber-100 text-amber-700' :
+          'bg-red-100 text-red-700'
+        }`}>
+          {fault.status === 'fixed' ? 'טופל' : fault.status === 'in_progress' ? 'בטיפול' : 'פעיל'}
+        </span>
+        <span className="text-xs text-slate-400 font-medium italic">
+          {fault.createdAt ? formatDistanceToNow(fault.createdAt.toDate(), { addSuffix: true, locale: he }) : ''}
+        </span>
+      </div>
+      <h4 className="text-lg font-bold text-slate-800 mb-1 line-clamp-2">
+        {fault.title}
+      </h4>
+      <p className="text-sm text-slate-500 mb-4 whitespace-pre-wrap line-clamp-3">
+        {fault.description}
+      </p>
+
+      {fault.status === 'in_progress' && fault.treatmentNote && (
+        <div className="mb-4 bg-amber-50 rounded-lg p-3 border border-amber-100 text-sm text-amber-900">
+          <strong className="block mb-1 text-xs">המשך טיפול:</strong>
+          <p className="whitespace-pre-wrap">{fault.treatmentNote}</p>
+        </div>
+      )}
+
+      {faultHasImage(fault) && (
+        <button
+          type="button"
+          onClick={() => handleViewImage(fault)}
+          disabled={loadingImageId === fault.id}
+          className="mb-4 flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-600 text-sm font-medium hover:bg-slate-100 transition-colors disabled:opacity-50"
+        >
+          {loadingImageId === fault.id ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <ImageIcon className="w-4 h-4" />
+          )}
+          <span>{loadingImageId === fault.id ? 'טוען תמונה...' : 'צפייה בתמונה'}</span>
+        </button>
+      )}
+
+      <div className="flex items-center gap-2 mb-6 mt-auto pt-2 flex-wrap">
+        <div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0">
+          {fault.reporterName.charAt(0)}
+        </div>
+        <span className="text-xs text-slate-600 font-semibold truncate max-w-[120px]">
+          דווח: {fault.reporterName}
+        </span>
+        <span className="mx-1 text-slate-300">•</span>
+        <span className="text-xs text-slate-400 italic truncate max-w-[100px]">
+          מיקום: {fault.location}
+        </span>
+      </div>
+      <div className="flex gap-2">
+        {fault.status === 'open' && (
+          <button
+            onClick={() => {
+              setTreatmentText('');
+              setTreatmentModalActiveFor(fault);
+            }}
+            className="flex-1 py-2 text-sm font-bold rounded-xl transition-colors bg-amber-100 text-amber-700 hover:bg-amber-200"
+          >
+            המשך טיפול
+          </button>
+        )}
+        <button
+          onClick={() => handleToggleStatus(fault)}
+          disabled={togglingId === fault.id}
+          className={`flex-1 py-2 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            fault.status === 'open' || fault.status === 'in_progress'
+              ? 'bg-emerald-500 text-white hover:bg-emerald-600'
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          {togglingId === fault.id ? (
+            <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
+          ) : (
+            fault.status === 'fixed' ? 'החזר לפעיל' : 'סמן כבוצע'
+          )}
+        </button>
+        <button
+          onClick={() => handleDelete(fault)}
+          className={`px-3 py-2 rounded-xl transition-colors border ${
+            deletingId === fault.id
+            ? 'bg-red-500 text-white border-red-500 hover:bg-red-600'
+            : 'bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-500 border-slate-100'
+          }`}
+          title={deletingId === fault.id ? 'לחצו שוב לאישור מחיקה' : 'מחיקה'}
+        >
+          <Trash2 className="w-5 h-5" />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <>
-      {/* Filter Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex gap-2 sm:gap-4 overflow-x-auto pb-2">
-          <button 
+          <button
             onClick={() => setFilter('all')}
             className={`whitespace-nowrap px-4 py-2 rounded-lg text-sm font-bold transition-colors ${filter === 'all' ? 'bg-slate-200 text-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
           >
-            הכל
+            פעילות
           </button>
-          <button 
+          <button
             onClick={() => setFilter('open')}
             className={`whitespace-nowrap px-4 py-2 rounded-lg text-sm font-bold transition-colors ${filter === 'open' ? 'bg-slate-200 text-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
           >
             פתוחות
           </button>
-          <button 
+          <button
             onClick={() => setFilter('in_progress')}
             className={`whitespace-nowrap px-4 py-2 rounded-lg text-sm font-bold transition-colors ${filter === 'in_progress' ? 'bg-slate-200 text-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
           >
             בטיפול
           </button>
-          <button 
+          <button
             onClick={() => setFilter('fixed')}
             className={`whitespace-nowrap px-4 py-2 rounded-lg text-sm font-bold transition-colors ${filter === 'fixed' ? 'bg-slate-200 text-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
           >
             טופלו
           </button>
         </div>
-        <div className="hidden sm:flex items-center text-sm text-slate-400 font-medium">
-          <span className="ml-2">סינון לפי:</span>
-          <select className="bg-transparent font-bold text-slate-600 outline-none">
-            <option>הכי חדשים</option>
-          </select>
-        </div>
+        <p className="hidden sm:block text-xs text-slate-400 font-medium">
+          {isFixedView ? 'נטענות לפי דרישה' : 'עדכון בזמן אמת'}
+        </p>
       </div>
 
-      {filteredFaults.length === 0 ? (
+      {isLoading ? (
+        <div className="flex justify-center items-center py-20 flex-1">
+          <div className="w-8 h-8 flex items-center justify-center border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+        </div>
+      ) : filteredFaults.length === 0 ? (
         <div className="text-center py-20 bg-white rounded-2xl border border-slate-200 shadow-sm mt-4">
           <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
             <Wrench className="text-slate-400" size={32} />
@@ -131,105 +350,25 @@ export function FaultList({ faults, loading }: FaultListProps) {
           <p className="text-slate-500 text-sm">לא נמצאו דיווחים התואמים לסינון או שעוד לא דווחו.</p>
         </div>
       ) : (
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-          {filteredFaults.map((fault) => (
-            <div 
-              key={fault.id} 
-              className={`bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col hover:shadow-md transition-all h-fit ${fault.status === 'fixed' ? 'opacity-80' : ''}`}
-            >
-              <div className="flex justify-between items-start mb-4">
-                <span className={`px-2 py-1 text-[10px] font-bold rounded uppercase ${
-                  fault.status === 'fixed' ? 'bg-emerald-100 text-emerald-700' : 
-                  fault.status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 
-                  'bg-red-100 text-red-700'
-                }`}>
-                  {fault.status === 'fixed' ? 'טופל' : fault.status === 'in_progress' ? 'בטיפול' : 'פעיל'}
-                </span>
-                <span className="text-xs text-slate-400 font-medium italic">
-                  {fault.createdAt ? formatDistanceToNow(fault.createdAt.toDate(), { addSuffix: true, locale: he }) : ''}
-                </span>
-              </div>
-              <h4 className="text-lg font-bold text-slate-800 mb-1 line-clamp-2">
-                {fault.title}
-              </h4>
-              <p className="text-sm text-slate-500 mb-4 whitespace-pre-wrap line-clamp-3">
-                {fault.description}
-              </p>
-              
-              {fault.status === 'in_progress' && fault.treatmentNote && (
-                <div className="mb-4 bg-amber-50 rounded-lg p-3 border border-amber-100 text-sm text-amber-900">
-                  <strong className="block mb-1 text-xs">המשך טיפול:</strong>
-                  <p className="whitespace-pre-wrap">{fault.treatmentNote}</p>
-                </div>
-              )}
-
-              {fault.imageUrl && (
-                <button
-                  type="button"
-                  onClick={() => setExpandedImageUrl(fault.imageUrl!)}
-                  className="mb-4 rounded-xl overflow-hidden border border-slate-200 w-full cursor-zoom-in hover:opacity-90 transition-opacity"
-                  title="לחצו להגדלה"
-                >
-                  <img src={fault.imageUrl} alt="תמונה של התקלה" className="w-full h-32 object-cover" />
-                </button>
-              )}
-              <div className="flex items-center gap-2 mb-6 mt-auto pt-2 flex-wrap">
-                <div className="w-6 h-6 bg-slate-100 rounded-full flex items-center justify-center text-[10px] font-bold text-slate-600 shrink-0">
-                  {fault.reporterName.charAt(0)}
-                </div>
-                <span className="text-xs text-slate-600 font-semibold truncate max-w-[120px]">
-                  דווח: {fault.reporterName}
-                </span>
-                <span className="mx-1 text-slate-300">•</span>
-                <span className="text-xs text-slate-400 italic truncate max-w-[100px]">
-                  מיקום: {fault.location}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                {fault.status === 'open' && (
-                  <button
-                    onClick={() => {
-                      setTreatmentText('');
-                      setTreatmentModalActiveFor(fault);
-                    }}
-                    className="flex-1 py-2 text-sm font-bold rounded-xl transition-colors bg-amber-100 text-amber-700 hover:bg-amber-200"
-                  >
-                    המשך טיפול
-                  </button>
-                )}
-                <button
-                  onClick={() => handleToggleStatus(fault)}
-                  disabled={togglingId === fault.id}
-                  className={`flex-1 py-2 text-sm font-bold rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                    fault.status === 'open' || fault.status === 'in_progress'
-                      ? 'bg-emerald-500 text-white hover:bg-emerald-600' 
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {togglingId === fault.id ? (
-                    <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin mx-auto" />
-                  ) : (
-                    fault.status === 'fixed' ? 'החזר לפעיל' : 'סמן כבוצע'
-                  )}
-                </button>
-                <button
-                  onClick={() => handleDelete(fault.id)}
-                  className={`px-3 py-2 rounded-xl transition-colors border ${
-                    deletingId === fault.id 
-                    ? 'bg-red-500 text-white border-red-500 hover:bg-red-600' 
-                    : 'bg-slate-50 text-slate-400 hover:bg-red-50 hover:text-red-500 border-slate-100'
-                  }`}
-                  title={deletingId === fault.id ? "לחצו שוב לאישור מחיקה" : "מחיקה"}
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
-              </div>
+        <>
+          <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {filteredFaults.map(renderFaultCard)}
+          </div>
+          {isFixedView && hasMoreFixed && (
+            <div className="flex justify-center mt-6">
+              <button
+                onClick={() => loadFixedFaults(true)}
+                disabled={fixedLoadingMore}
+                className="px-6 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-50 flex items-center gap-2"
+              >
+                {fixedLoadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
+                טען עוד
+              </button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
 
-      {/* Image Lightbox */}
       {expandedImageUrl && (
         <div
           className="fixed inset-0 bg-black/85 z-50 flex items-center justify-center p-4 backdrop-blur-sm"
@@ -247,18 +386,18 @@ export function FaultList({ faults, loading }: FaultListProps) {
             src={expandedImageUrl}
             alt="תמונה של התקלה"
             className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
+            loading="lazy"
             onClick={(e) => e.stopPropagation()}
           />
         </div>
       )}
 
-      {/* Treatment Modal */}
       {treatmentModalActiveFor && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between p-6 border-b border-gray-100">
               <h2 className="text-xl font-semibold text-gray-800">המשך טיפול בתקלה</h2>
-              <button 
+              <button
                 onClick={() => setTreatmentModalActiveFor(null)}
                 className="p-2 -m-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors"
               >

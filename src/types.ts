@@ -12,6 +12,12 @@ export interface Fault {
   createdAt: Timestamp;
   updatedAt: Timestamp;
   createdBy: string;
+  hasImage?: boolean;
+  /** @deprecated Legacy inline images — use fault_images collection */
   imageUrl?: string;
   treatmentNote?: string;
 }
+
+export const ACTIVE_FAULTS_LIMIT = 50;
+export const FIXED_FAULTS_PAGE_SIZE = 30;
+export const ARCHIVE_DAYS = 90;

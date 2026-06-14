@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { saveFaultImage } from '../lib/faultImages';
+import { compressImageFile } from '../lib/imageUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { ImagePlus, X } from 'lucide-react';
 
@@ -18,53 +20,20 @@ export function FaultForm({ onClose }: FaultFormProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      setError('התמונה גדולה מדי (מעל 10MB).');
-      return;
+    try {
+      const dataUrl = await compressImageFile(file);
+      setImageBase64(dataUrl);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'שגיאה בעיבוד התמונה.');
+      setImageBase64(null);
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
-        const MAX_HEIGHT = 800;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.6); // Higher compression
-        if (dataUrl.length > 1000000) {
-           setError('התמונה עדיין גדולה מדי לאחר דחיסה. נסו תמונה אחרת.');
-           return;
-        }
-        setImageBase64(dataUrl);
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -81,25 +50,24 @@ export function FaultForm({ onClose }: FaultFormProps) {
 
     try {
       const newRef = doc(collection(db, 'faults'));
-      const faultData: any = {
+      await setDoc(newRef, {
         title: title.trim(),
         description: description.trim(),
         location: location.trim(),
         reporterName: reporterName.trim(),
         status: 'open',
+        hasImage: !!imageBase64,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: user.uid,
-      };
-      
+      });
+
       if (imageBase64) {
-        faultData.imageUrl = imageBase64;
+        await saveFaultImage(newRef.id, imageBase64);
       }
-      
-      await setDoc(newRef, faultData);
+
       onClose();
     } catch (err) {
-      // Use our custom error handler
       try {
         handleFirestoreError(err, OperationType.CREATE, 'faults');
       } catch (e) {
