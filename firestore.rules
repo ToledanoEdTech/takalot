@@ -7,15 +7,20 @@ service cloud.firestore {
     }
 
     // Primitive Definition
-    function isValidId(id) { 
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
     function incoming() { return request.resource.data; }
     function existing() { return resource.data; }
     function isSignedIn() { return request.auth != null; }
 
-    function isAdmin() { 
-      return isSignedIn() && 'email' in request.auth.token && request.auth.token.email == 'yosseftole@zvialod.com'; 
+    function isAdmin() {
+      return isSignedIn()
+        && 'email' in request.auth.token
+        && (
+          request.auth.token.email == 'yosseftole@zvialod.com'
+          || request.auth.token.email == 'yossitole@gmail.com'
+        );
     }
 
     function faultExists(faultId) {
@@ -42,9 +47,9 @@ service cloud.firestore {
         && data.createdBy is string;
     }
 
-    function isCreateFaultValid(data) {
+    // New schema: hasImage flag, image stored in fault_images
+    function isCreateFaultNewSchema(data) {
       let hasTreatmentNote = 'treatmentNote' in data ? 1 : 0;
-      
       return isValidFaultFields(data)
         && data.keys().hasAll(['hasImage'])
         && data.hasImage is bool
@@ -52,7 +57,25 @@ service cloud.firestore {
         && data.createdBy == request.auth.uid
         && data.keys().size() == 9 + hasTreatmentNote
         && data.createdAt == request.time
-        && data.updatedAt == request.time;
+        && data.updatedAt == request.time
+        && data.status == 'open';
+    }
+
+    // Legacy schema still deployed on some environments
+    function isCreateFaultLegacySchema(data) {
+      let hasImageUrl = 'imageUrl' in data ? 1 : 0;
+      let hasTreatmentNote = 'treatmentNote' in data ? 1 : 0;
+      return isValidFaultFields(data)
+        && !('hasImage' in data)
+        && data.createdBy == request.auth.uid
+        && data.keys().size() == 8 + hasImageUrl + hasTreatmentNote
+        && data.createdAt == request.time
+        && data.updatedAt == request.time
+        && data.status == 'open';
+    }
+
+    function isCreateFaultValid(data) {
+      return isCreateFaultNewSchema(data) || isCreateFaultLegacySchema(data);
     }
 
     function isValidStatus(status) {
@@ -76,7 +99,7 @@ service cloud.firestore {
     }
 
     function isDetailsUpdate() {
-      return incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'treatmentNote']);
+      return incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'treatmentNote', 'imageUrl', 'hasImage']);
     }
 
     // 1. Faults Collection
@@ -84,12 +107,12 @@ service cloud.firestore {
       allow get: if isSignedIn() && isValidId(faultId);
       allow list: if isSignedIn();
 
-      allow create: if isSignedIn() 
-        && isValidId(faultId) 
+      allow create: if isSignedIn()
+        && isValidId(faultId)
         && isCreateFaultValid(incoming());
 
-      allow update: if isSignedIn() 
-        && isValidId(faultId) 
+      allow update: if isSignedIn()
+        && isValidId(faultId)
         && isUpdateFaultValid(incoming(), existing())
         && (
           (isStatusOnlyUpdate() && isValidStatus(incoming().status)) ||
@@ -97,7 +120,7 @@ service cloud.firestore {
           (isDetailsUpdate() && isValidFaultFields(incoming()))
         );
 
-      allow delete: if isSignedIn() && (isAdmin() || resource.data.createdBy == request.auth.uid);
+      allow delete: if isSignedIn() && isValidId(faultId);
     }
 
     // 2. Fault Images (lazy-loaded, separate from fault metadata)
@@ -115,7 +138,7 @@ service cloud.firestore {
 
       allow delete: if isSignedIn()
         && isValidId(faultId)
-        && (isAdmin() || (faultExists(faultId) && faultCreatedBy(faultId) == request.auth.uid));
+        && (isAdmin() || !faultExists(faultId) || faultCreatedBy(faultId) == request.auth.uid);
 
       allow update: if false;
     }

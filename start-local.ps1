@@ -1,6 +1,8 @@
 # Takalot local dev server
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$DevPort = 3042
+$DevUrl = "http://localhost:$DevPort"
 Set-Location $ProjectRoot
 
 function Test-ViteReady {
@@ -37,18 +39,29 @@ function Install-Dependencies {
 function Start-DevServer {
     $viteCmd = Join-Path $ProjectRoot "node_modules\.bin\vite.cmd"
     $viteJs = Join-Path $ProjectRoot "node_modules\vite\bin\vite.js"
-    $args = @("--port=3000", "--host=0.0.0.0", "--open")
+    $viteArgs = @("--port=$DevPort", "--host=0.0.0.0", "--strictPort")
 
-    if (Test-Path $viteCmd) {
-        & $viteCmd @args
-        return
+    $openJob = Start-Job -ScriptBlock {
+        param($url)
+        Start-Sleep -Seconds 3
+        Start-Process $url
+    } -ArgumentList $DevUrl
+
+    try {
+        if (Test-Path $viteCmd) {
+            & $viteCmd @viteArgs
+        } else {
+            & node $viteJs @viteArgs
+        }
+    } finally {
+        Stop-Job $openJob -ErrorAction SilentlyContinue
+        Remove-Job $openJob -Force -ErrorAction SilentlyContinue
     }
-
-    & node $viteJs @args
 }
 
 Write-Host ""
 Write-Host "=== Takalot - Local Dev Server ===" -ForegroundColor Cyan
+Write-Host "Project folder: $ProjectRoot" -ForegroundColor Gray
 Write-Host ""
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -127,8 +140,9 @@ if (-not (Test-ViteReady)) {
     exit 1
 }
 
-Write-Host "Starting site at http://localhost:3000" -ForegroundColor Green
-Write-Host "Browser will open automatically. Stop with Ctrl+C" -ForegroundColor Gray
+Write-Host "Starting Takalot at $DevUrl" -ForegroundColor Green
+Write-Host "This project always uses port $DevPort (won't open other sites)." -ForegroundColor Gray
+Write-Host "Stop with Ctrl+C" -ForegroundColor Gray
 Write-Host ""
 
 try {

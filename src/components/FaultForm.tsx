@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { collection, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
-import { saveFaultImage } from '../lib/faultImages';
 import { compressImageFile } from '../lib/imageUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { ImagePlus, X } from 'lucide-react';
@@ -50,28 +49,35 @@ export function FaultForm({ onClose }: FaultFormProps) {
 
     try {
       const newRef = doc(collection(db, 'faults'));
-      await setDoc(newRef, {
+
+      // Must match currently deployed Firestore rules (legacy schema):
+      // 8 required fields + optional imageUrl. The hasImage/fault_images
+      // schema works only after deploy-rules.bat is run.
+      const payload: Record<string, unknown> = {
         title: title.trim(),
         description: description.trim(),
         location: location.trim(),
         reporterName: reporterName.trim(),
         status: 'open',
-        hasImage: !!imageBase64,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         createdBy: user.uid,
-      });
+      };
 
       if (imageBase64) {
-        await saveFaultImage(newRef.id, imageBase64);
+        payload.imageUrl = imageBase64;
       }
 
+      await setDoc(newRef, payload);
       onClose();
     } catch (err) {
       try {
         handleFirestoreError(err, OperationType.CREATE, 'faults');
-      } catch (e) {
-        if (e instanceof Error) {
+      } catch {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('permission') || message.includes('PERMISSION_DENIED')) {
+          setError('אין הרשאה ליצור תקלה. הריצו deploy-rules.bat כדי לעדכן את כללי Firebase.');
+        } else {
           setError('שגיאה ביצירת התקלה. ייתכן שגודל הטקסט חורג מהמותר או שגיאת רשת.');
         }
       }
