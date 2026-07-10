@@ -7,7 +7,6 @@ import {
   collection,
   query,
   where,
-  orderBy,
   limit,
   getDocs,
   startAfter,
@@ -60,18 +59,17 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
 
     try {
       const col = collection(db, 'faults');
+      // Avoid orderBy + where (needs composite index). Sort client-side instead.
       const q = loadMore && fixedLastDoc
         ? query(
             col,
             where('status', '==', 'fixed'),
-            orderBy('createdAt', 'desc'),
             startAfter(fixedLastDoc),
             limit(FIXED_FAULTS_PAGE_SIZE)
           )
         : query(
             col,
             where('status', '==', 'fixed'),
-            orderBy('createdAt', 'desc'),
             limit(FIXED_FAULTS_PAGE_SIZE)
           );
 
@@ -81,12 +79,26 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
         ...docSnap.data(),
       })) as Fault[];
 
-      setFixedFaults((prev) => (loadMore ? [...prev, ...page] : page));
+      page.sort((a, b) => {
+        const aTime = a.createdAt?.toMillis?.() ?? 0;
+        const bTime = b.createdAt?.toMillis?.() ?? 0;
+        return bTime - aTime;
+      });
+
+      setFixedFaults((prev) => {
+        const merged = loadMore ? [...prev, ...page] : page;
+        return merged.sort((a, b) => {
+          const aTime = a.createdAt?.toMillis?.() ?? 0;
+          const bTime = b.createdAt?.toMillis?.() ?? 0;
+          return bTime - aTime;
+        });
+      });
       setFixedLastDoc(snapshot.docs[snapshot.docs.length - 1] ?? null);
       setHasMoreFixed(snapshot.docs.length === FIXED_FAULTS_PAGE_SIZE);
       setFixedLoaded(true);
     } catch (error) {
-      handleFirestoreError(error, OperationType.LIST, 'faults/fixed');
+      console.error('Failed to load fixed faults:', error);
+      setFixedLoaded(true);
     } finally {
       setFixedLoading(false);
       setFixedLoadingMore(false);

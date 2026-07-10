@@ -128,25 +128,28 @@ export function AdminPanel({ onDataChanged }: AdminPanelProps) {
     try {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - ARCHIVE_DAYS);
+      const cutoffMs = cutoff.getTime();
 
+      // Single-field filter only — compound where needs a composite index.
       const snapshot = await getDocs(
-        query(
-          collection(db, 'faults'),
-          where('status', '==', 'fixed'),
-          where('updatedAt', '<', Timestamp.fromDate(cutoff))
-        )
+        query(collection(db, 'faults'), where('status', '==', 'fixed'))
       );
 
-      if (snapshot.empty) {
+      const oldDocs = snapshot.docs.filter((docSnap) => {
+        const updatedAt = docSnap.data().updatedAt as Timestamp | undefined;
+        return updatedAt && updatedAt.toMillis() < cutoffMs;
+      });
+
+      if (oldDocs.length === 0) {
         alert(`אין תקלות "טופלו" ישנות מ-${ARCHIVE_DAYS} יום למחיקה`);
         return;
       }
 
-      if (!window.confirm(`האם למחוק לצמיתות ${snapshot.size} תקלות "טופלו" מלפני ${ARCHIVE_DAYS} יום?`)) {
+      if (!window.confirm(`האם למחוק לצמיתות ${oldDocs.length} תקלות "טופלו" מלפני ${ARCHIVE_DAYS} יום?`)) {
         return;
       }
 
-      await deleteFaultsWithImages(snapshot.docs.map((docSnap) => docSnap.id));
+      await deleteFaultsWithImages(oldDocs.map((docSnap) => docSnap.id));
       alert('התקלות נמחקו בהצלחה');
       onDataChanged?.();
     } catch (error: unknown) {
