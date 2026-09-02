@@ -11,18 +11,17 @@ function getCreateTransport() {
 function getSmtpConfig() {
   const user = process.env.SMTP_USER?.trim();
   const pass = (process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || '').replace(/\s+/g, '');
-  const from = (process.env.MAIL_FROM || user || '').trim();
 
   if (!user || !pass) {
     throw new Error('SMTP_USER and SMTP_APP_PASSWORD must be configured');
   }
 
-  return { user, pass, from: from || user };
+  return { user, pass };
 }
 
 export async function sendMail(input) {
   try {
-    const { user, pass, from } = getSmtpConfig();
+    const { user, pass } = getSmtpConfig();
     const transport = getCreateTransport()({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: Number(process.env.SMTP_PORT || 587),
@@ -31,19 +30,11 @@ export async function sendMail(input) {
     });
 
     const info = await transport.sendMail({
-      from: {
-        name: 'מערכת תקלות ישיבת צביה',
-        address: user,
-      },
-      replyTo: from || user,
+      from: user,
       to: input.to,
       subject: input.subject,
       html: input.html,
       text: input.text,
-      envelope: {
-        from: user,
-        to: [input.to],
-      },
     });
 
     const accepted = (info.accepted || []).map((entry) => (typeof entry === 'string' ? entry : entry.address));

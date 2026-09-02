@@ -75,33 +75,51 @@ export function renderFaultNotificationEmail(input) {
   const primaryKind = input.items[0]?.kind ?? 'instant';
   const kindText = kindLabel(primaryKind, input.items[0]?.daysBefore);
   const count = input.items.length;
+  const first = input.items[0];
 
   const subject =
     primaryKind === 'instant'
-      ? `תקלה חדשה: ${input.items[0]?.title ?? 'דיווח חדש'}`
+      ? `תקלה חדשה: ${first?.title ?? 'דיווח חדש'}`
       : `תזכורת: ${count} תקלות ממתינות לטיפול`;
 
-  const html = `
-    <div dir="rtl" style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#0f172a;">
-      <h2 style="color:#4338ca;margin-bottom:8px;">${escapeHtml(kindText)}</h2>
-      <p style="color:#475569;">שלום ${escapeHtml(input.recipientName)},</p>
-      <p style="color:#475569;">${count === 1 ? 'יש תקלה אחת' : `יש ${count} תקלות`} שדורשות את תשומת לבך:</p>
-      ${renderItemsHtml(input.items)}
-      <p style="margin-top:24px;">
-        <a href="${input.appUrl}" style="display:inline-block;background:#4338ca;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;">
-          כניסה למערכת התקלות
-        </a>
-      </p>
-    </div>
-  `;
+  const details = input.items
+    .slice(0, MAX_ITEMS_IN_BODY)
+    .map((item) => {
+      const desc = item.description ? `<p style="margin:8px 0 0;color:#475569;">${escapeHtml(item.description)}</p>` : '';
+      return `
+        <p style="margin:0 0 16px;">
+          <strong>${escapeHtml(item.title)}</strong><br/>
+          סוג: ${escapeHtml(categoryLabel(item.category))}<br/>
+          מיקום: ${escapeHtml(item.location)}<br/>
+          מדווח: ${escapeHtml(item.reporterName || '—')}<br/>
+          סטטוס: ${escapeHtml(statusLabel(item.status))}
+          ${desc}
+        </p>`;
+    })
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<body style="font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.6;direction:rtl;text-align:right;">
+  <p>שלום ${escapeHtml(input.recipientName)},</p>
+  <p>${escapeHtml(kindText)}.</p>
+  ${details}
+  <p>לצפייה במערכת: ${escapeHtml(input.appUrl)}</p>
+  <p style="color:#64748b;font-size:13px;">הודעה זו נשלחה אוטומטית ממערכת דיווח התקלות של הישיבה.</p>
+</body>
+</html>`;
 
   const text = [
-    kindText,
     `שלום ${input.recipientName},`,
-    count === 1 ? 'יש תקלה אחת שדורשת את תשומת לבך:' : `יש ${count} תקלות שדורשות את תשומת לבך:`,
+    '',
+    kindText,
+    '',
     renderItemsText(input.items),
-    `לכניסה למערכת: ${input.appUrl}`,
-  ].join('\n\n');
+    '',
+    `לצפייה במערכת: ${input.appUrl}`,
+    '',
+    'הודעה זו נשלחה אוטומטית ממערכת דיווח התקלות של הישיבה.',
+  ].join('\n');
 
   return { subject, html, text };
 }
