@@ -1,32 +1,6 @@
-import type {
-  EmailRecipient,
-  FaultCategory,
-  ReminderFaultItem,
-  ReminderPlan,
-  ReminderRecipient,
-  ReminderKind,
-  SendDecision,
-  SkipReason,
-} from './notification-types';
-import { addDaysToYmd, getIsraelYmd, isActiveFaultStatus, timestampToIsraelYmd } from './timezone';
+import { addDaysToYmd, getIsraelYmd, isActiveFaultStatus, timestampToIsraelYmd } from './timezone.js';
 
-export interface FaultRecord {
-  id: string;
-  title?: string;
-  description?: string;
-  location?: string;
-  reporterName?: string;
-  status?: string;
-  category?: FaultCategory;
-  createdAt?: unknown;
-}
-
-export function buildDedupKey(
-  recipientId: string,
-  faultId: string,
-  kind: ReminderKind,
-  daysBefore?: number
-): string {
+export function buildDedupKey(recipientId, faultId, kind, daysBefore) {
   if (kind === 'pre-due' && daysBefore) {
     return `${recipientId}::${faultId}::pre-${daysBefore}`;
   }
@@ -36,7 +10,7 @@ export function buildDedupKey(
   return `${recipientId}::${faultId}::instant`;
 }
 
-export function buildReminderRecipients(recipients: EmailRecipient[]): ReminderRecipient[] {
+export function buildReminderRecipients(recipients) {
   return recipients
     .filter((r) => r.email?.trim())
     .map((r) => ({
@@ -48,27 +22,22 @@ export function buildReminderRecipients(recipients: EmailRecipient[]): ReminderR
     }));
 }
 
-export function collectPostDueFaults(faults: FaultRecord[], today: string): ReminderFaultItem[] {
+export function collectPostDueFaults(faults, today) {
   const targetCreatedDate = addDaysToYmd(today, -1);
-  const items: ReminderFaultItem[] = [];
+  const items = [];
 
   for (const fault of faults) {
     if (!fault.status || !isActiveFaultStatus(fault.status)) continue;
     const createdAtYmd = timestampToIsraelYmd(fault.createdAt);
     if (!createdAtYmd || createdAtYmd !== targetCreatedDate) continue;
-
     items.push(mapFaultToReminderItem(fault, createdAtYmd, 'post-due'));
   }
 
   return items;
 }
 
-export function collectPreDueFaults(
-  faults: FaultRecord[],
-  today: string,
-  daysBeforeList: number[]
-): ReminderFaultItem[] {
-  const items: ReminderFaultItem[] = [];
+export function collectPreDueFaults(faults, today, daysBeforeList) {
+  const items = [];
 
   for (const fault of faults) {
     if (!fault.status || !isActiveFaultStatus(fault.status)) continue;
@@ -85,17 +54,12 @@ export function collectPreDueFaults(
   return items;
 }
 
-export function mapFaultToInstantItem(fault: FaultRecord): ReminderFaultItem | null {
+export function mapFaultToInstantItem(fault) {
   const createdAtYmd = timestampToIsraelYmd(fault.createdAt) ?? getIsraelYmd();
   return mapFaultToReminderItem(fault, createdAtYmd, 'instant');
 }
 
-function mapFaultToReminderItem(
-  fault: FaultRecord,
-  createdAtYmd: string,
-  kind: ReminderKind,
-  daysBefore?: number
-): ReminderFaultItem {
+function mapFaultToReminderItem(fault, createdAtYmd, kind, daysBefore) {
   return {
     faultId: fault.id,
     title: fault.title ?? 'ללא כותרת',
@@ -103,18 +67,15 @@ function mapFaultToReminderItem(
     reporterName: fault.reporterName ?? '—',
     description: fault.description ?? '',
     category: fault.category ?? 'general',
-    status: (fault.status as ReminderFaultItem['status']) ?? 'open',
+    status: fault.status ?? 'open',
     createdAtYmd,
     kind,
     daysBefore,
   };
 }
 
-export function buildReminderPlans(
-  items: ReminderFaultItem[],
-  recipients: ReminderRecipient[]
-): ReminderPlan[] {
-  const plans: ReminderPlan[] = [];
+export function buildReminderPlans(items, recipients) {
+  const plans = [];
 
   for (const recipient of recipients) {
     const matched = items.filter((item) => recipient.categories.includes(item.category));
@@ -125,14 +86,8 @@ export function buildReminderPlans(
   return plans;
 }
 
-export function filterUnsentReminderItems(
-  plan: ReminderPlan,
-  lastSentByRecipient: Record<string, string> | undefined,
-  force: boolean,
-  today: string
-): ReminderFaultItem[] {
+export function filterUnsentReminderItems(plan, lastSentByRecipient, force, today) {
   if (force) return plan.items;
-
   const map = lastSentByRecipient ?? {};
   return plan.items.filter((item) => {
     const key = buildDedupKey(plan.recipient.id, item.faultId, item.kind, item.daysBefore);
@@ -140,12 +95,7 @@ export function filterUnsentReminderItems(
   });
 }
 
-export function shouldSendToRecipient(
-  unsentItems: ReminderFaultItem[],
-  settings: { minThreshold: number },
-  recipient: ReminderRecipient,
-  globalEnabled: boolean
-): SendDecision {
+export function shouldSendToRecipient(unsentItems, settings, recipient, globalEnabled) {
   if (!globalEnabled) return { send: false, reason: 'inactive' };
   if (recipient.reminderOptOut) return { send: false, reason: 'opt_out' };
   if (!recipient.email) return { send: false, reason: 'no_email' };
@@ -156,12 +106,7 @@ export function shouldSendToRecipient(
   return { send: true };
 }
 
-export function updateDedupMapForPlan(
-  dedupMap: Record<string, string>,
-  plan: ReminderPlan,
-  items: ReminderFaultItem[],
-  today: string
-): Record<string, string> {
+export function updateDedupMapForPlan(dedupMap, plan, items, today) {
   const next = { ...dedupMap };
   for (const item of items) {
     const key = buildDedupKey(plan.recipient.id, item.faultId, item.kind, item.daysBefore);
@@ -170,17 +115,7 @@ export function updateDedupMapForPlan(
   return next;
 }
 
-export function previewDailyRun(
-  faults: FaultRecord[],
-  settings: {
-    enabled: boolean;
-    postDueEnabled: boolean;
-    preDueReminders: { enabled: boolean; daysBefore: number[] };
-    minThreshold: number;
-    recipients: EmailRecipient[];
-  },
-  today = getIsraelYmd()
-) {
+export function previewDailyRun(faults, settings, today = getIsraelYmd()) {
   const postDueItems = settings.postDueEnabled ? collectPostDueFaults(faults, today) : [];
   const preDueItems = settings.preDueReminders.enabled
     ? collectPreDueFaults(faults, today, settings.preDueReminders.daysBefore)

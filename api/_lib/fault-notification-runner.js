@@ -1,4 +1,3 @@
-import type { FaultNotificationSettings, RunSummary } from './notification-types';
 import {
   buildReminderPlans,
   buildReminderRecipients,
@@ -8,59 +7,44 @@ import {
   mapFaultToInstantItem,
   shouldSendToRecipient,
   updateDedupMapForPlan,
-  type FaultRecord,
-} from './fault-notifications';
-import { getFaultNotificationSettings, saveFaultNotificationSettingsAfterRun } from './fault-notification-settings';
-import { renderFaultNotificationEmail } from './email-template';
-import { sendMail } from './mailer';
-import { getAdminDb } from './firebase-admin';
-import { getIsraelYmd } from './timezone';
+} from './fault-notifications.js';
+import { getFaultNotificationSettings, saveFaultNotificationSettingsAfterRun } from './fault-notification-settings.js';
+import { renderFaultNotificationEmail } from './email-template.js';
+import { sendMail } from './mailer.js';
+import { getAdminDb } from './firebase-admin.js';
+import { getIsraelYmd } from './timezone.js';
 
-function emptySummary(dryRun: boolean): RunSummary {
+function emptySummary(dryRun) {
   return { sent: 0, skipped: 0, errors: 0, dryRun, at: new Date().toISOString(), results: [] };
 }
 
-async function loadActiveFaults(): Promise<FaultRecord[]> {
+async function loadActiveFaults() {
   const snapshot = await getAdminDb().collection('faults').where('status', 'in', ['open', 'in_progress']).get();
-  return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() } as FaultRecord));
+  return snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
 }
 
-async function loadFaultById(faultId: string): Promise<FaultRecord | null> {
+async function loadFaultById(faultId) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const snap = await getAdminDb().doc(`faults/${faultId}`).get();
     if (snap.exists) {
-      return { id: snap.id, ...snap.data() } as FaultRecord;
+      return { id: snap.id, ...snap.data() };
     }
     await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
   }
   return null;
 }
 
-function getAppUrl(): string {
+function getAppUrl() {
   return process.env.APP_URL || 'https://takalot-beige.vercel.app';
 }
 
-async function executePlans(
-  settings: FaultNotificationSettings,
-  plans: ReturnType<typeof buildReminderPlans>,
-  options: { dryRun: boolean; force: boolean; today: string; globalEnabled: boolean }
-): Promise<{ summary: RunSummary; dedupMap: Record<string, string> }> {
+async function executePlans(settings, plans, options) {
   const summary = emptySummary(options.dryRun);
   let dedupMap = { ...(settings.lastSentByRecipient ?? {}) };
 
   for (const plan of plans) {
-    const unsent = filterUnsentReminderItems(
-      plan,
-      dedupMap,
-      options.force,
-      options.today
-    );
-    const decision = shouldSendToRecipient(
-      unsent,
-      settings,
-      plan.recipient,
-      options.globalEnabled
-    );
+    const unsent = filterUnsentReminderItems(plan, dedupMap, options.force, options.today);
+    const decision = shouldSendToRecipient(unsent, settings, plan.recipient, options.globalEnabled);
 
     if (!decision.send) {
       summary.skipped += 1;
@@ -120,10 +104,7 @@ async function executePlans(
   return { summary, dedupMap };
 }
 
-export async function runDailyFaultReminders(options: {
-  dryRun?: boolean;
-  force?: boolean;
-} = {}): Promise<RunSummary> {
+export async function runDailyFaultReminders(options = {}) {
   const dryRun = options.dryRun ?? false;
   const force = options.force ?? false;
   const settings = await getFaultNotificationSettings();
@@ -167,10 +148,7 @@ export async function runDailyFaultReminders(options: {
   return summary;
 }
 
-export async function runInstantFaultNotification(
-  faultId: string,
-  options: { dryRun?: boolean; force?: boolean; fault?: FaultRecord } = {}
-): Promise<RunSummary> {
+export async function runInstantFaultNotification(faultId, options = {}) {
   const dryRun = options.dryRun ?? false;
   const force = options.force ?? false;
   const settings = await getFaultNotificationSettings();
@@ -208,11 +186,7 @@ export async function runInstantFaultNotification(
   });
 
   if (!dryRun && summary.sent > 0) {
-    await saveFaultNotificationSettingsAfterRun(
-      settings,
-      settings.lastRunSummary,
-      dedupMap
-    );
+    await saveFaultNotificationSettingsAfterRun(settings, settings.lastRunSummary, dedupMap);
   }
 
   return summary;

@@ -1,14 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { runInstantFaultNotification } from '../_lib/fault-notification-runner';
-import type { FaultRecord } from '../_lib/fault-notifications';
-import { json, parseBody } from '../_lib/http';
+import { runInstantFaultNotification } from '../_lib/fault-notification-runner.js';
+import { json, parseBody } from '../_lib/http.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
     return json(res, 405, { error: 'Method not allowed' });
   }
 
-  const body = parseBody<{ faultId?: string; fault?: FaultRecord }>(req);
+  const body = parseBody(req);
   if (!body.faultId) {
     return json(res, 400, { error: 'faultId is required' });
   }

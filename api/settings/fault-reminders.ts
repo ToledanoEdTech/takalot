@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAdminDb, verifyAdminRequest } from '../_lib/firebase-admin';
+import { getAdminDb, verifyAdminRequest } from '../_lib/firebase-admin.js';
 import {
   getFaultNotificationSettings,
   updateFaultNotificationSettings,
-} from '../_lib/fault-notification-settings';
-import { previewDailyRun } from '../_lib/fault-notifications';
-import { runDailyFaultReminders, runInstantFaultNotification } from '../_lib/fault-notification-runner';
-import { json, parseBody } from '../_lib/http';
-import { normalizeSettings, type FaultNotificationSettings } from '../_lib/notification-types';
+} from '../_lib/fault-notification-settings.js';
+import { previewDailyRun } from '../_lib/fault-notifications.js';
+import { runDailyFaultReminders, runInstantFaultNotification } from '../_lib/fault-notification-runner.js';
+import { json, parseBody } from '../_lib/http.js';
+import { normalizeSettings } from '../_lib/notification-types.js';
 
 async function loadFaultsForPreview() {
   const snapshot = await getAdminDb()
@@ -32,7 +32,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'PATCH') {
-      const body = parseBody<Partial<FaultNotificationSettings>>(req);
+      const body = parseBody(req);
       const current = await getFaultNotificationSettings();
       const next = await updateFaultNotificationSettings(
         normalizeSettings({ ...current, ...body })
@@ -43,12 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === 'POST') {
-      const body = parseBody<{
-        dryRun?: boolean;
-        force?: boolean;
-        mode?: 'daily' | 'instant';
-        faultId?: string;
-      }>(req);
+      const body = parseBody(req);
       const dryRun = Boolean(body.dryRun);
       const force = Boolean(body.force);
 

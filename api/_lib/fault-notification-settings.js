@@ -3,24 +3,21 @@ import {
   FAULT_NOTIFICATION_SETTINGS_DOC,
   LEGACY_NOTIFICATION_SETTINGS_DOC,
   normalizeSettings,
-  type FaultNotificationSettings,
-} from './notification-types';
-import { getAdminDb } from './firebase-admin';
-import { omitUndefined } from './http';
+} from './notification-types.js';
+import { getAdminDb } from './firebase-admin.js';
+import { omitUndefined } from './http.js';
 
-export async function getFaultNotificationSettings(): Promise<FaultNotificationSettings> {
+export async function getFaultNotificationSettings() {
   const db = getAdminDb();
   const snap = await db.doc(FAULT_NOTIFICATION_SETTINGS_DOC).get();
 
   if (snap.exists) {
-    return normalizeSettings(snap.data() as Partial<FaultNotificationSettings>);
+    return normalizeSettings(snap.data());
   }
 
   const legacy = await db.doc(LEGACY_NOTIFICATION_SETTINGS_DOC).get();
   if (legacy.exists) {
-    const data = legacy.data() as Partial<FaultNotificationSettings> & {
-      recipients?: FaultNotificationSettings['recipients'];
-    };
+    const data = legacy.data();
     return normalizeSettings({
       ...DEFAULT_FAULT_NOTIFICATION_SETTINGS,
       enabled: data.enabled ?? true,
@@ -31,21 +28,15 @@ export async function getFaultNotificationSettings(): Promise<FaultNotificationS
   return { ...DEFAULT_FAULT_NOTIFICATION_SETTINGS };
 }
 
-export async function updateFaultNotificationSettings(
-  patch: Partial<FaultNotificationSettings>
-): Promise<FaultNotificationSettings> {
+export async function updateFaultNotificationSettings(patch) {
   const current = await getFaultNotificationSettings();
   const next = normalizeSettings({ ...current, ...patch });
   await getAdminDb().doc(FAULT_NOTIFICATION_SETTINGS_DOC).set(omitUndefined(next), { merge: false });
   return next;
 }
 
-export async function saveFaultNotificationSettingsAfterRun(
-  settings: FaultNotificationSettings,
-  summary: FaultNotificationSettings['lastRunSummary'],
-  dedupMap: Record<string, string>
-): Promise<void> {
-  const next: FaultNotificationSettings = {
+export async function saveFaultNotificationSettingsAfterRun(settings, summary, dedupMap) {
+  const next = {
     ...settings,
     lastRunAt: new Date().toISOString(),
     lastRunSummary: summary,

@@ -1,22 +1,7 @@
 import nodemailer from 'nodemailer';
 
-export interface SendMailInput {
-  to: string;
-  subject: string;
-  html: string;
-  text: string;
-}
-
-export type SendMailResult =
-  | { ok: true; messageId: string }
-  | { ok: false; error: string };
-
 function getCreateTransport() {
-  const mod = nodemailer as unknown as {
-    createTransport?: typeof nodemailer.createTransport;
-    default?: { createTransport: typeof nodemailer.createTransport };
-  };
-  const fn = mod.createTransport ?? mod.default?.createTransport;
+  const fn = nodemailer.createTransport ?? nodemailer.default?.createTransport;
   if (!fn) {
     throw new Error('nodemailer.createTransport is unavailable');
   }
@@ -32,10 +17,10 @@ function getSmtpConfig() {
     throw new Error('SMTP_USER and SMTP_APP_PASSWORD must be configured');
   }
 
-  return { user, pass, from: from! };
+  return { user, pass, from };
 }
 
-export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
+export async function sendMail(input) {
   try {
     const { user, pass, from } = getSmtpConfig();
     const transport = getCreateTransport()({
@@ -62,6 +47,6 @@ export async function sendMail(input: SendMailInput): Promise<SendMailResult> {
   }
 }
 
-export function isSmtpConfigured(): boolean {
+export function isSmtpConfigured() {
   return Boolean(process.env.SMTP_USER && (process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS));
 }

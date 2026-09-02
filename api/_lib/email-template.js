@@ -1,21 +1,20 @@
-import type { ReminderFaultItem, ReminderKind } from './notification-types';
-import { categoryLabel } from './notification-types';
+import { categoryLabel } from './notification-types.js';
 
 const MAX_ITEMS_IN_BODY = 5;
 
-function kindLabel(kind: ReminderKind, daysBefore?: number): string {
+function kindLabel(kind, daysBefore) {
   if (kind === 'instant') return 'תקלה חדשה';
   if (kind === 'post-due') return 'תזכורת — תקלה פתוחה מאתמול';
   return `תזכורת — ${daysBefore} ימים מתקלת הדיווח`;
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status) {
   if (status === 'in_progress') return 'בטיפול';
   if (status === 'fixed') return 'טופל';
   return 'פתוח';
 }
 
-function renderItemsHtml(items: ReminderFaultItem[]): string {
+function renderItemsHtml(items) {
   const visible = items.slice(0, MAX_ITEMS_IN_BODY);
   const remaining = items.length - visible.length;
 
@@ -52,7 +51,7 @@ function renderItemsHtml(items: ReminderFaultItem[]): string {
   `;
 }
 
-function renderItemsText(items: ReminderFaultItem[]): string {
+function renderItemsText(items) {
   const visible = items.slice(0, MAX_ITEMS_IN_BODY);
   const lines = visible.map(
     (item, i) =>
@@ -63,11 +62,7 @@ function renderItemsText(items: ReminderFaultItem[]): string {
   return lines.join('\n');
 }
 
-export function renderFaultNotificationEmail(input: {
-  recipientName: string;
-  items: ReminderFaultItem[];
-  appUrl: string;
-}) {
+export function renderFaultNotificationEmail(input) {
   const primaryKind = input.items[0]?.kind ?? 'instant';
   const kindText = kindLabel(primaryKind, input.items[0]?.daysBefore);
   const count = input.items.length;
@@ -102,7 +97,7 @@ export function renderFaultNotificationEmail(input: {
   return { subject, html, text };
 }
 
-export function renderTestEmail(appUrl: string) {
+export function renderTestEmail(appUrl) {
   return renderFaultNotificationEmail({
     recipientName: 'מנהל המערכת',
     items: [

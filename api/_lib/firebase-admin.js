@@ -1,13 +1,12 @@
-import { initializeApp, cert, getApps, type App, type ServiceAccount } from 'firebase-admin/app';
+import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
-import type { VercelRequest } from '@vercel/node';
 
 const ADMIN_EMAILS = new Set(['yosseftole@zvialod.com', 'yossitole@gmail.com']);
 
-let app: App | undefined;
+let app;
 
-function parseServiceAccount(raw: string): ServiceAccount {
+function parseServiceAccount(raw) {
   const trimmed = raw.trim().replace(/^\uFEFF/, '');
   const candidates = [trimmed];
 
@@ -26,7 +25,7 @@ function parseServiceAccount(raw: string): ServiceAccount {
 
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(candidate) as ServiceAccount & { private_key?: string };
+      const parsed = JSON.parse(candidate);
       if (parsed?.private_key) {
         parsed.private_key = String(parsed.private_key).replace(/\\n/g, '\n');
         return parsed;
@@ -39,7 +38,7 @@ function parseServiceAccount(raw: string): ServiceAccount {
   throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON');
 }
 
-function initFirebaseAdmin(): App {
+function initFirebaseAdmin() {
   if (app) return app;
   if (getApps().length > 0) {
     app = getApps()[0];
@@ -67,13 +66,11 @@ export function getAdminAuth() {
   return getAuth();
 }
 
-export function isAdminEmail(email: string | undefined | null): boolean {
-  return Boolean(email && ADMIN_EMAILS.has(email.toLowerCase()));
+export function isAdminEmail(email) {
+  return Boolean(email && ADMIN_EMAILS.has(String(email).toLowerCase()));
 }
 
-export async function verifyAdminRequest(
-  req: VercelRequest
-): Promise<{ ok: true; email: string; uid: string } | { ok: false; status: number; error: string }> {
+export async function verifyAdminRequest(req) {
   const secret = process.env.CRON_SECRET;
   const authHeader = req.headers.authorization;
 
@@ -91,7 +88,7 @@ export async function verifyAdminRequest(
     if (!isAdminEmail(decoded.email)) {
       return { ok: false, status: 403, error: 'Admin access required' };
     }
-    return { ok: true, email: decoded.email!, uid: decoded.uid };
+    return { ok: true, email: decoded.email, uid: decoded.uid };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Invalid authorization token';
     return { ok: false, status: 401, error: message };

@@ -1,9 +1,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyAdminRequest } from './_lib/firebase-admin';
-import { verifyCronAuth } from './_lib/cron-auth';
-import { sendMail, isSmtpConfigured } from './_lib/mailer';
-import { renderTestEmail } from './_lib/email-template';
-import { json } from './_lib/http';
+import { verifyAdminRequest } from './_lib/firebase-admin.js';
+import { verifyCronAuth } from './_lib/cron-auth.js';
+import { sendMail, isSmtpConfigured } from './_lib/mailer.js';
+import { renderTestEmail } from './_lib/email-template.js';
+import { json } from './_lib/http.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {

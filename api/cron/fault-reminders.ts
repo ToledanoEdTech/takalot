@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyCronAuth } from '../_lib/cron-auth';
-import { runDailyFaultReminders } from '../_lib/fault-notification-runner';
-import { json } from '../_lib/http';
+import { verifyCronAuth } from '../_lib/cron-auth.js';
+import { runDailyFaultReminders } from '../_lib/fault-notification-runner.js';
+import { json } from '../_lib/http.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
