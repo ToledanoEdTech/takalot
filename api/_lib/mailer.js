@@ -1,5 +1,8 @@
 import nodemailer from 'nodemailer';
 
+const FROM_NAME = 'מערכת תקלות ישיבת צביה';
+const FROM_ADDRESS = 'takalot@zvialod.com';
+
 function getCreateTransport() {
   const fn = nodemailer.createTransport ?? nodemailer.default?.createTransport;
   if (!fn) {
@@ -11,17 +14,20 @@ function getCreateTransport() {
 function getSmtpConfig() {
   const user = process.env.SMTP_USER?.trim();
   const pass = (process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || '').replace(/\s+/g, '');
+  const configuredFrom = process.env.MAIL_FROM?.trim();
+  const fromAddress =
+    configuredFrom && /takalot/i.test(configuredFrom) ? configuredFrom : FROM_ADDRESS;
 
   if (!user || !pass) {
     throw new Error('SMTP_USER and SMTP_APP_PASSWORD must be configured');
   }
 
-  return { user, pass };
+  return { user, pass, fromAddress };
 }
 
 export async function sendMail(input) {
   try {
-    const { user, pass } = getSmtpConfig();
+    const { user, pass, fromAddress } = getSmtpConfig();
     const transport = getCreateTransport()({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
       port: Number(process.env.SMTP_PORT || 587),
@@ -30,7 +36,11 @@ export async function sendMail(input) {
     });
 
     const info = await transport.sendMail({
-      from: user,
+      from: {
+        name: FROM_NAME,
+        address: fromAddress,
+      },
+      replyTo: fromAddress,
       to: input.to,
       subject: input.subject,
       html: input.html,
@@ -42,6 +52,7 @@ export async function sendMail(input) {
       'SMTP send',
       JSON.stringify({
         to: input.to,
+        from: fromAddress,
         accepted,
         rejected: info.rejected,
         response: info.response,

@@ -79,13 +79,13 @@ export function renderFaultNotificationEmail(input) {
 
   const subject =
     primaryKind === 'instant'
-      ? `תקלה חדשה: ${first?.title ?? 'דיווח חדש'}`
-      : `תזכורת: ${count} תקלות ממתינות לטיפול`;
+      ? `מערכת תקלות | תקלה חדשה: ${first?.title ?? 'דיווח חדש'}`
+      : `מערכת תקלות | תזכורת: ${count} תקלות ממתינות לטיפול`;
 
   const details = input.items
     .slice(0, MAX_ITEMS_IN_BODY)
     .map((item) => {
-      const desc = item.description ? `<p style="margin:8px 0 0;color:#475569;">${escapeHtml(item.description)}</p>` : '';
+      const desc = item.description ? `<p style="margin:8px 0 0;color:#334155;">${escapeHtml(item.description)}</p>` : '';
       return `
         <p style="margin:0 0 16px;">
           <strong>${escapeHtml(item.title)}</strong><br/>
@@ -101,15 +101,18 @@ export function renderFaultNotificationEmail(input) {
   const html = `<!DOCTYPE html>
 <html lang="he" dir="rtl">
 <body style="font-family:Arial,Helvetica,sans-serif;color:#111;line-height:1.6;direction:rtl;text-align:right;">
+  <p style="margin:0 0 16px;font-size:18px;font-weight:bold;">מערכת דיווחי תקלות — ישיבת צביה אלישיב</p>
   <p>שלום ${escapeHtml(input.recipientName)},</p>
   <p>${escapeHtml(kindText)}.</p>
   ${details}
   <p>לצפייה במערכת: ${escapeHtml(input.appUrl)}</p>
-  <p style="color:#64748b;font-size:13px;">הודעה זו נשלחה אוטומטית ממערכת דיווח התקלות של הישיבה.</p>
+  <p style="color:#64748b;font-size:13px;">הודעה זו נשלחה אוטומטית ממערכת דיווח התקלות של הישיבה, לא ממערכת הבגרות.</p>
 </body>
 </html>`;
 
   const text = [
+    'מערכת דיווחי תקלות — ישיבת צביה אלישיב',
+    '',
     `שלום ${input.recipientName},`,
     '',
     kindText,
@@ -118,7 +121,7 @@ export function renderFaultNotificationEmail(input) {
     '',
     `לצפייה במערכת: ${input.appUrl}`,
     '',
-    'הודעה זו נשלחה אוטומטית ממערכת דיווח התקלות של הישיבה.',
+    'הודעה זו נשלחה אוטומטית ממערכת דיווח התקלות של הישיבה, לא ממערכת הבגרות.',
   ].join('\n');
 
   return { subject, html, text };
