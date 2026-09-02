@@ -1,4 +1,15 @@
-import { Timestamp } from 'firebase/firestore';
+export type {
+  EmailRecipient,
+  FaultCategory,
+  FaultNotificationSettings,
+  RunSummary,
+} from '../shared/notification-types';
+
+export {
+  categoryLabel,
+  recipientCategoriesLabel,
+  isValidEmail,
+} from '../shared/notification-types';
 
 export type FaultStatus = 'open' | 'in_progress' | 'fixed';
 
@@ -9,13 +20,32 @@ export interface Fault {
   location: string;
   reporterName: string;
   status: FaultStatus;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  category?: import('../shared/notification-types').FaultCategory;
+  createdAt: import('firebase/firestore').Timestamp;
+  updatedAt: import('firebase/firestore').Timestamp;
   createdBy: string;
   hasImage?: boolean;
-  /** @deprecated Legacy inline images — use fault_images collection */
   imageUrl?: string;
   treatmentNote?: string;
+}
+
+export function getFaultCategory(fault: Fault): import('../shared/notification-types').FaultCategory {
+  return fault.category ?? 'general';
+}
+
+export interface SettingsPreview {
+  today: string;
+  postDueCount: number;
+  preDueCount: number;
+  totalItems: number;
+  recipientPlans: number;
+  wouldSend: number;
+  wouldSkip: number;
+}
+
+export interface SettingsResponse {
+  settings: import('../shared/notification-types').FaultNotificationSettings;
+  preview: SettingsPreview;
 }
 
 export const ACTIVE_FAULTS_LIMIT = 50;

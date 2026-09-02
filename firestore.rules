@@ -31,9 +31,18 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/faults/$(faultId)).data.createdBy;
     }
 
+    function isValidCategory(category) {
+      return category == 'general' || category == 'computer';
+    }
+
+    function existingCategory() {
+      return ('category' in existing()) ? existing().category : 'general';
+    }
+
     // Validation Blueprint for Fault
     function isValidFaultFields(data) {
       return data.keys().hasAll(['title', 'description', 'location', 'reporterName', 'status', 'createdAt', 'updatedAt', 'createdBy'])
+        && (!('category' in data) || isValidCategory(data.category))
         && (!('hasImage' in data) || data.hasImage is bool)
         && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000000))
         && (!('treatmentNote' in data) || (data.treatmentNote is string && data.treatmentNote.size() <= 1000))
@@ -51,11 +60,12 @@ service cloud.firestore {
     function isCreateFaultNewSchema(data) {
       let hasTreatmentNote = 'treatmentNote' in data ? 1 : 0;
       return isValidFaultFields(data)
-        && data.keys().hasAll(['hasImage'])
+        && data.keys().hasAll(['hasImage', 'category'])
         && data.hasImage is bool
+        && isValidCategory(data.category)
         && !('imageUrl' in data)
         && data.createdBy == request.auth.uid
-        && data.keys().size() == 9 + hasTreatmentNote
+        && data.keys().size() == 10 + hasTreatmentNote
         && data.createdAt == request.time
         && data.updatedAt == request.time
         && data.status == 'open';
@@ -66,9 +76,11 @@ service cloud.firestore {
       let hasImageUrl = 'imageUrl' in data ? 1 : 0;
       let hasTreatmentNote = 'treatmentNote' in data ? 1 : 0;
       return isValidFaultFields(data)
+        && data.keys().hasAll(['category'])
+        && isValidCategory(data.category)
         && !('hasImage' in data)
         && data.createdBy == request.auth.uid
-        && data.keys().size() == 8 + hasImageUrl + hasTreatmentNote
+        && data.keys().size() == 9 + hasImageUrl + hasTreatmentNote
         && data.createdAt == request.time
         && data.updatedAt == request.time
         && data.status == 'open';
@@ -98,8 +110,14 @@ service cloud.firestore {
         && (!('treatmentNote' in incoming()) || (incoming().treatmentNote is string && incoming().treatmentNote.size() <= 1000));
     }
 
+    function isCategoryTransferUpdate() {
+      return incoming().diff(existing()).affectedKeys().hasOnly(['category', 'updatedAt'])
+        && incoming().category == 'computer'
+        && existingCategory() == 'general';
+    }
+
     function isDetailsUpdate() {
-      return incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'treatmentNote', 'imageUrl', 'hasImage']);
+      return incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'location', 'status', 'updatedAt', 'treatmentNote', 'imageUrl', 'hasImage', 'category']);
     }
 
     // 1. Faults Collection
@@ -117,6 +135,7 @@ service cloud.firestore {
         && (
           (isStatusOnlyUpdate() && isValidStatus(incoming().status)) ||
           (isTreatmentUpdate() && isValidStatus(incoming().status)) ||
+          (isCategoryTransferUpdate()) ||
           (isDetailsUpdate() && isValidFaultFields(incoming()))
         );
 
@@ -141,6 +160,15 @@ service cloud.firestore {
         && (isAdmin() || !faultExists(faultId) || faultCreatedBy(faultId) == request.auth.uid);
 
       allow update: if false;
+    }
+
+    // 3. Notification settings — server-side only (Vercel API via Admin SDK)
+    match /settings/fault-notifications {
+      allow read, write: if false;
+    }
+
+    match /settings/notifications {
+      allow read, write: if false;
     }
   }
 }

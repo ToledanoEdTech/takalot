@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { deleteFaultImage, getFaultImage } from '../lib/faultImages';
-import { Fault, FaultStatus, FIXED_FAULTS_PAGE_SIZE } from '../types';
+import { Fault, FaultStatus, FaultCategory, FIXED_FAULTS_PAGE_SIZE, getFaultCategory, categoryLabel } from '../types';
 import {
   Trash2,
   Wrench,
@@ -27,12 +27,15 @@ import {
   Clock,
   ChevronLeft,
   StickyNote,
+  Monitor,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { he } from 'date-fns/locale';
 
 interface FaultListProps {
   activeFaults: Fault[];
+  category: FaultCategory;
   loading: boolean;
   onStatsChange?: () => void;
 }
@@ -134,7 +137,7 @@ function formatAbsolute(fault: Fault, field: 'createdAt' | 'updatedAt'): string 
   return format(date, 'd MMMM yyyy, HH:mm', { locale: he });
 }
 
-export function FaultList({ activeFaults, loading, onStatsChange }: FaultListProps) {
+export function FaultList({ activeFaults, category, loading, onStatsChange }: FaultListProps) {
   const [filter, setFilter] = useState<'all' | 'open' | 'in_progress' | 'fixed'>('all');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -149,6 +152,7 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
   const [treatmentText, setTreatmentText] = useState('');
   const [savingTreatment, setSavingTreatment] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [transferringId, setTransferringId] = useState<string | null>(null);
 
   const [selectedFault, setSelectedFault] = useState<Fault | null>(null);
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
@@ -190,8 +194,10 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
         return bTime - aTime;
       });
 
+      const categoryPage = page.filter((f) => getFaultCategory(f) === category);
+
       setFixedFaults((prev) => {
-        const merged = loadMore ? [...prev, ...page] : page;
+        const merged = loadMore ? [...prev, ...categoryPage] : categoryPage;
         return merged.sort((a, b) => {
           const aTime = a.createdAt?.toMillis?.() ?? 0;
           const bTime = b.createdAt?.toMillis?.() ?? 0;
@@ -208,7 +214,13 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
       setFixedLoading(false);
       setFixedLoadingMore(false);
     }
-  }, [fixedLastDoc]);
+  }, [fixedLastDoc, category]);
+
+  useEffect(() => {
+    setFixedLoaded(false);
+    setFixedFaults([]);
+    setFixedLastDoc(null);
+  }, [category]);
 
   useEffect(() => {
     if (filter === 'fixed' && !fixedLoaded) {
@@ -316,6 +328,29 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
     }
   };
 
+  const handleTransferToComputer = async (fault: Fault) => {
+    if (transferringId || getFaultCategory(fault) !== 'general') return;
+    if (!window.confirm('להעביר תקלה זו לקטגוריית מחשבים?')) return;
+
+    setTransferringId(fault.id);
+    try {
+      const faultRef = doc(db, 'faults', fault.id);
+      await updateDoc(faultRef, {
+        category: 'computer',
+        updatedAt: serverTimestamp(),
+      });
+      if (selectedFault?.id === fault.id) {
+        setSelectedFault(null);
+      }
+      onStatsChange?.();
+    } catch (error) {
+      console.error('Failed to transfer fault:', error);
+      alert('לא ניתן להעביר את התקלה. נסו שוב.');
+    } finally {
+      setTransferringId(null);
+    }
+  };
+
   const handleDelete = async (fault: Fault) => {
     if (deletingId !== fault.id) {
       setDeletingId(fault.id);
@@ -350,6 +385,23 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
+      {getFaultCategory(fault) === 'general' && category === 'general' && (
+        <button
+          type="button"
+          onClick={() => handleTransferToComputer(fault)}
+          disabled={transferringId === fault.id}
+          className="flex-1 py-2 px-2 text-sm font-bold rounded-xl transition-colors bg-violet-100 text-violet-800 hover:bg-violet-200 disabled:opacity-50 flex items-center justify-center gap-1"
+        >
+          {transferringId === fault.id ? (
+            <div className="w-5 h-5 border-2 border-violet-400/30 border-t-violet-800 rounded-full animate-spin" />
+          ) : (
+            <>
+              <ArrowRightLeft className="w-4 h-4" />
+              העבר למחשבים
+            </>
+          )}
+        </button>
+      )}
       {fault.status === 'open' && (
         <button
           type="button"
@@ -413,11 +465,19 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
         ${fault.status === 'fixed' ? 'opacity-80' : ''}`}
     >
       <div className="flex justify-between items-start gap-2 mb-3">
-        <span
-          className={`shrink-0 px-2.5 py-1 text-xs font-bold rounded-md ${statusBadgeClass(fault.status)}`}
-        >
-          {statusLabel(fault.status)}
-        </span>
+        <div className="flex flex-wrap gap-1.5">
+          <span
+            className={`shrink-0 px-2.5 py-1 text-xs font-bold rounded-md ${statusBadgeClass(fault.status)}`}
+          >
+            {statusLabel(fault.status)}
+          </span>
+          {getFaultCategory(fault) === 'computer' && (
+            <span className="shrink-0 px-2.5 py-1 text-xs font-bold rounded-md bg-violet-100 text-violet-800 flex items-center gap-1">
+              <Monitor className="w-3 h-3" />
+              {categoryLabel('computer')}
+            </span>
+          )}
+        </div>
         <span className="text-xs text-slate-500 font-medium text-left leading-snug">
           {formatRelative(fault)}
         </span>
@@ -562,6 +622,9 @@ export function FaultList({ activeFaults, loading, onStatsChange }: FaultListPro
                   className={`inline-flex items-center px-2.5 py-1 text-xs font-bold rounded-lg mb-2.5 ${statusBadgeClass(selectedFault.status)}`}
                 >
                   {statusLabel(selectedFault.status)}
+                </span>
+                <span className="inline-flex items-center px-2.5 py-1 text-xs font-bold rounded-lg mb-2.5 mr-2 bg-slate-100 text-slate-700">
+                  {categoryLabel(getFaultCategory(selectedFault))}
                 </span>
                 <h2
                   id="fault-detail-title"

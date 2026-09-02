@@ -15,10 +15,10 @@ import {
   query,
   where,
   limit,
-  getCountFromServer,
+  getDocs,
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
-import { Fault, ACTIVE_FAULTS_LIMIT } from './types';
+import { Fault, FaultCategory, ACTIVE_FAULTS_LIMIT, getFaultCategory } from './types';
 
 interface FaultStats {
   openCount: number;
@@ -29,6 +29,7 @@ interface FaultStats {
 function Dashboard() {
   const { user, login, logout, loading } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [categoryTab, setCategoryTab] = useState<FaultCategory>('general');
   const [activeFaults, setActiveFaults] = useState<Fault[]>([]);
   const [faultsLoading, setFaultsLoading] = useState(true);
   const [stats, setStats] = useState<FaultStats>({
@@ -40,23 +41,23 @@ function Dashboard() {
   const refreshStats = useCallback(async () => {
     if (!user) return;
 
-    try {
-      const col = collection(db, 'faults');
-      const [openSnap, inProgressSnap, fixedSnap] = await Promise.all([
-        getCountFromServer(query(col, where('status', '==', 'open'))),
-        getCountFromServer(query(col, where('status', '==', 'in_progress'))),
-        getCountFromServer(query(col, where('status', '==', 'fixed'))),
-      ]);
+    const filtered = activeFaults.filter((f) => getFaultCategory(f) === categoryTab);
+    setStats((prev) => ({
+      ...prev,
+      openCount: filtered.filter((f) => f.status === 'open').length,
+      inProgressCount: filtered.filter((f) => f.status === 'in_progress').length,
+    }));
 
-      setStats({
-        openCount: openSnap.data().count,
-        inProgressCount: inProgressSnap.data().count,
-        fixedCount: fixedSnap.data().count,
-      });
+    try {
+      const snap = await getDocs(query(collection(db, 'faults'), where('status', '==', 'fixed')));
+      const fixedCount = snap.docs.filter(
+        (d) => getFaultCategory({ id: d.id, ...d.data() } as Fault) === categoryTab
+      ).length;
+      setStats((prev) => ({ ...prev, fixedCount }));
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'faults/stats');
     }
-  }, [user]);
+  }, [user, activeFaults, categoryTab]);
 
   useEffect(() => {
     if (!user) return;
@@ -99,6 +100,14 @@ function Dashboard() {
 
     return () => unsubscribe();
   }, [user, refreshStats]);
+
+  useEffect(() => {
+    refreshStats();
+  }, [categoryTab, refreshStats]);
+
+  const categoryFilteredFaults = activeFaults.filter(
+    (f) => getFaultCategory(f) === categoryTab
+  );
 
   const isAdmin = user?.email === 'yosseftole@zvialod.com';
 
@@ -194,8 +203,35 @@ function Dashboard() {
         </aside>
 
         <main className="flex-1 flex flex-col p-4 md:p-8 gap-6 lg:overflow-y-auto">
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCategoryTab('general')}
+              className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-colors ${
+                categoryTab === 'general'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              תקלות כלליות
+            </button>
+            <button
+              onClick={() => setCategoryTab('computer')}
+              className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-colors ${
+                categoryTab === 'computer'
+                  ? 'bg-indigo-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              תקלות מחשבים
+            </button>
+          </div>
           {isAdmin && <AdminPanel onDataChanged={refreshStats} />}
-          <FaultList activeFaults={activeFaults} loading={faultsLoading} onStatsChange={refreshStats} />
+          <FaultList
+            activeFaults={categoryFilteredFaults}
+            category={categoryTab}
+            loading={faultsLoading}
+            onStatsChange={refreshStats}
+          />
         </main>
       </div>
 
