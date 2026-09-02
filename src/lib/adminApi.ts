@@ -10,6 +10,10 @@ async function authHeaders(user: User): Promise<HeadersInit> {
 }
 
 async function parseJson<T>(res: Response): Promise<T> {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('שרת ה-API לא זמין (הריצו npx vercel dev או פרסו ל-Vercel)');
+  }
   const data = await res.json();
   if (!res.ok) {
     throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);

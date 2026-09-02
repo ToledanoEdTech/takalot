@@ -12,7 +12,6 @@ import {
 import { Fault, ARCHIVE_DAYS, getFaultCategory, categoryLabel } from '../types';
 import * as XLSX from 'xlsx';
 import { FileSpreadsheet, Trash2, ShieldAlert, Loader2 } from 'lucide-react';
-import { EmailSettingsPanel } from './EmailSettingsPanel';
 
 interface AdminPanelProps {
   onDataChanged?: () => void;
@@ -178,7 +177,7 @@ export function AdminPanel({ onDataChanged }: AdminPanelProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <button
           onClick={handleExportExcel}
           disabled={loading !== null}
@@ -209,8 +208,6 @@ export function AdminPanel({ onDataChanged }: AdminPanelProps) {
           <span className="text-xs opacity-70">ניקוי היסטוריה ישנה לשחרור מקום</span>
         </button>
       </div>
-
-      <EmailSettingsPanel />
     </div>
   );
 }

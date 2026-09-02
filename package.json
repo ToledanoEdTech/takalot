@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3042 --host=0.0.0.0 --strictPort",
+    "dev:full": "vercel dev --listen 3042",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",

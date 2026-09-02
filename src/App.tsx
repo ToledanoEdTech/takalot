@@ -8,7 +8,8 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { FaultList } from './components/FaultList';
 import { FaultForm } from './components/FaultForm';
 import { AdminPanel } from './components/AdminPanel';
-import { Plus, LogOut } from 'lucide-react';
+import { EmailSettingsPanel } from './components/EmailSettingsPanel';
+import { Plus, LogOut, Mail, LayoutList } from 'lucide-react';
 import {
   collection,
   onSnapshot,
@@ -19,6 +20,9 @@ import {
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './lib/firebase';
 import { Fault, FaultCategory, ACTIVE_FAULTS_LIMIT, getFaultCategory } from './types';
+import { isAdminEmail } from './lib/admin';
+
+type AdminView = 'faults' | 'email-settings';
 
 interface FaultStats {
   openCount: number;
@@ -30,6 +34,7 @@ function Dashboard() {
   const { user, login, logout, loading } = useAuth();
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [categoryTab, setCategoryTab] = useState<FaultCategory>('general');
+  const [adminView, setAdminView] = useState<AdminView>('faults');
   const [activeFaults, setActiveFaults] = useState<Fault[]>([]);
   const [faultsLoading, setFaultsLoading] = useState(true);
   const [stats, setStats] = useState<FaultStats>({
@@ -38,16 +43,8 @@ function Dashboard() {
     fixedCount: 0,
   });
 
-  const refreshStats = useCallback(async () => {
+  const refreshFixedCount = useCallback(async () => {
     if (!user) return;
-
-    const filtered = activeFaults.filter((f) => getFaultCategory(f) === categoryTab);
-    setStats((prev) => ({
-      ...prev,
-      openCount: filtered.filter((f) => f.status === 'open').length,
-      inProgressCount: filtered.filter((f) => f.status === 'in_progress').length,
-    }));
-
     try {
       const snap = await getDocs(query(collection(db, 'faults'), where('status', '==', 'fixed')));
       const fixedCount = snap.docs.filter(
@@ -57,15 +54,24 @@ function Dashboard() {
     } catch (error) {
       handleFirestoreError(error, OperationType.LIST, 'faults/stats');
     }
-  }, [user, activeFaults, categoryTab]);
+  }, [user, categoryTab]);
+
+  useEffect(() => {
+    const filtered = activeFaults.filter((f) => getFaultCategory(f) === categoryTab);
+    setStats((prev) => ({
+      ...prev,
+      openCount: filtered.filter((f) => f.status === 'open').length,
+      inProgressCount: filtered.filter((f) => f.status === 'in_progress').length,
+    }));
+  }, [activeFaults, categoryTab]);
+
+  useEffect(() => {
+    refreshFixedCount();
+  }, [refreshFixedCount]);
 
   useEffect(() => {
     if (!user) return;
 
-    refreshStats();
-
-    // No orderBy here — equality/`in` + orderBy needs a composite index that may not be deployed yet.
-    // Sort client-side instead so the list loads reliably.
     const q = query(
       collection(db, 'faults'),
       where('status', 'in', ['open', 'in_progress']),
@@ -90,7 +96,6 @@ function Dashboard() {
 
         setActiveFaults(faultsData);
         setFaultsLoading(false);
-        refreshStats();
       },
       (error) => {
         console.error('Firestore Error: ', error);
@@ -99,17 +104,13 @@ function Dashboard() {
     );
 
     return () => unsubscribe();
-  }, [user, refreshStats]);
-
-  useEffect(() => {
-    refreshStats();
-  }, [categoryTab, refreshStats]);
+  }, [user]);
 
   const categoryFilteredFaults = activeFaults.filter(
     (f) => getFaultCategory(f) === categoryTab
   );
 
-  const isAdmin = user?.email === 'yosseftole@zvialod.com';
+  const isAdmin = isAdminEmail(user?.email);
 
   if (loading) {
     return (
@@ -168,7 +169,7 @@ function Dashboard() {
           <div className="flex items-center gap-2 text-left">
             <div className="hidden sm:block text-right">
               <p className="text-sm font-bold truncate max-w-[120px]">שלום, {user.displayName?.split(' ')[0]}</p>
-              <p className="text-[10px] text-slate-400">משתמש</p>
+              <p className="text-[10px] text-slate-400">{isAdmin ? 'מנהל מערכת' : 'משתמש'}</p>
             </div>
             <button
               onClick={logout}
@@ -203,35 +204,68 @@ function Dashboard() {
         </aside>
 
         <main className="flex-1 flex flex-col p-4 md:p-8 gap-6 lg:overflow-y-auto">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setCategoryTab('general')}
-              className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-                categoryTab === 'general'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              תקלות כלליות
-            </button>
-            <button
-              onClick={() => setCategoryTab('computer')}
-              className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-colors ${
-                categoryTab === 'computer'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              תקלות מחשבים
-            </button>
-          </div>
-          {isAdmin && <AdminPanel onDataChanged={refreshStats} />}
-          <FaultList
-            activeFaults={categoryFilteredFaults}
-            category={categoryTab}
-            loading={faultsLoading}
-            onStatsChange={refreshStats}
-          />
+          {isAdmin && (
+            <div className="flex gap-2 p-1 bg-white border border-slate-200 rounded-xl shadow-sm w-full sm:w-fit">
+              <button
+                onClick={() => setAdminView('faults')}
+                className={`flex items-center gap-2 flex-1 sm:flex-none px-5 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                  adminView === 'faults'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <LayoutList className="w-4 h-4" />
+                תקלות
+              </button>
+              <button
+                onClick={() => setAdminView('email-settings')}
+                className={`flex items-center gap-2 flex-1 sm:flex-none px-5 py-2.5 rounded-lg text-sm font-bold transition-colors ${
+                  adminView === 'email-settings'
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Mail className="w-4 h-4" />
+                הגדרות מייל
+              </button>
+            </div>
+          )}
+
+          {isAdmin && adminView === 'email-settings' ? (
+            <EmailSettingsPanel />
+          ) : (
+            <>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setCategoryTab('general')}
+                  className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-colors ${
+                    categoryTab === 'general'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  תקלות כלליות
+                </button>
+                <button
+                  onClick={() => setCategoryTab('computer')}
+                  className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl text-sm font-bold transition-colors ${
+                    categoryTab === 'computer'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  תקלות מחשבים
+                </button>
+              </div>
+              {isAdmin && <AdminPanel onDataChanged={refreshFixedCount} />}
+              <FaultList
+                activeFaults={categoryFilteredFaults}
+                category={categoryTab}
+                loading={faultsLoading}
+                onStatsChange={refreshFixedCount}
+              />
+            </>
+          )}
         </main>
       </div>
 

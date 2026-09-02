@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Mail,
   Plus,
@@ -7,156 +7,120 @@ import {
   Bell,
   BellOff,
   Save,
-  UserPlus,
-  Play,
-  FlaskConical,
-  Zap,
+  Wrench,
+  Monitor,
   Send,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import type { EmailRecipient, FaultCategory } from '../types';
 import { isValidEmail, recipientCategoriesLabel } from '../types';
 import type { FaultNotificationSettings } from '../types';
-import type { SettingsPreview } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import {
   createRecipientId,
   fetchFaultReminderSettings,
   patchFaultReminderSettings,
-  runFaultRemindersManual,
   sendTestEmail,
 } from '../lib/adminApi';
-
-interface DraftRecipient {
-  name: string;
-  email: string;
-  general: boolean;
-  computer: boolean;
-  reminderOptOut: boolean;
-}
-
-const emptyDraft = (): DraftRecipient => ({
-  name: '',
-  email: '',
-  general: true,
-  computer: false,
-  reminderOptOut: false,
-});
-
-function draftToCategories(draft: DraftRecipient): FaultCategory[] {
-  const categories: FaultCategory[] = [];
-  if (draft.general) categories.push('general');
-  if (draft.computer) categories.push('computer');
-  return categories;
-}
-
-function recipientToDraft(recipient: EmailRecipient): DraftRecipient {
-  return {
-    name: recipient.name,
-    email: recipient.email,
-    general: recipient.categories.includes('general'),
-    computer: recipient.categories.includes('computer'),
-    reminderOptOut: recipient.reminderOptOut ?? false,
-  };
-}
+import {
+  buildRecipientsFromRoles,
+  emptyRoleContact,
+  splitRecipientsByRole,
+  type RoleContact,
+} from '../lib/recipientRoles';
+import { DEFAULT_FAULT_NOTIFICATION_SETTINGS } from '../../shared/notification-types';
 
 export function EmailSettingsPanel() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [running, setRunning] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
   const [settings, setSettings] = useState<FaultNotificationSettings | null>(null);
-  const [preview, setPreview] = useState<SettingsPreview | null>(null);
-  const [recipients, setRecipients] = useState<EmailRecipient[]>([]);
-  const [draft, setDraft] = useState<DraftRecipient>(emptyDraft());
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [houseFather, setHouseFather] = useState<RoleContact>(emptyRoleContact());
+  const [computerTech, setComputerTech] = useState<RoleContact>(emptyRoleContact());
+  const [extraRecipients, setExtraRecipients] = useState<EmailRecipient[]>([]);
   const [testEmailTo, setTestEmailTo] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  const load = async () => {
+  const userId = user?.uid;
+
+  const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     setError(null);
     try {
       const data = await fetchFaultReminderSettings(user);
       setSettings(data.settings);
-      setPreview(data.preview);
-      setRecipients(data.settings.recipients);
+      const split = splitRecipientsByRole(data.settings.recipients);
+      setHouseFather(split.houseFatherContact);
+      setComputerTech(split.computerTechContact);
+      setExtraRecipients(split.extraRecipients);
       setDirty(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'שגיאה בטעינת ההגדרות');
+      setSettings({ ...DEFAULT_FAULT_NOTIFICATION_SETTINGS });
+      setHouseFather(emptyRoleContact());
+      setComputerTech(emptyRoleContact());
+      setExtraRecipients([]);
+      setError(
+        err instanceof Error
+          ? `${err.message} — בפיתוח מקומי הריצו: npx vercel dev`
+          : 'שגיאה בטעינת ההגדרות'
+      );
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    load();
   }, [user]);
 
-  const updateLocalSetting = <K extends keyof FaultNotificationSettings>(
-    key: K,
-    value: FaultNotificationSettings[K]
-  ) => {
-    setSettings((prev) => (prev ? { ...prev, [key]: value } : prev));
-    setDirty(true);
-  };
+  useEffect(() => {
+    if (!userId) return;
+    load();
+  }, [userId, load]);
 
-  const validateDraft = (value: DraftRecipient): string | null => {
-    if (!value.name.trim()) return 'נא להזין שם';
-    if (!value.email.trim()) return 'נא להזין כתובת מייל';
-    if (!isValidEmail(value.email)) return 'כתובת המייל אינה תקינה';
-    if (!value.general && !value.computer) return 'נא לבחור לפחות סוג תקלה אחד';
-    const duplicate = recipients.some(
-      (r) => r.email.toLowerCase() === value.email.trim().toLowerCase() && r.id !== editingId
-    );
-    if (duplicate) return 'כתובת המייל כבר קיימת ברשימה';
+  const markDirty = () => setDirty(true);
+
+  const validateRoles = (): string | null => {
+    if (houseFather.email.trim() && !isValidEmail(houseFather.email)) {
+      return 'מייל אב הבית אינו תקין';
+    }
+    if (computerTech.email.trim() && !isValidEmail(computerTech.email)) {
+      return 'מייל איש המחשבים אינו תקין';
+    }
+    if (!houseFather.email.trim() && !computerTech.email.trim()) {
+      return 'יש להזין לפחות מייל אחד — אב הבית או איש המחשבים';
+    }
     return null;
   };
 
-  const handleAddOrUpdate = () => {
-    const validationError = validateDraft(draft);
+  const handleSave = async () => {
+    if (!user || !settings) return;
+    const validationError = validateRoles();
     if (validationError) {
       setError(validationError);
       return;
     }
 
-    const payload: EmailRecipient = {
-      id: editingId ?? createRecipientId(),
-      name: draft.name.trim(),
-      email: draft.email.trim().toLowerCase(),
-      categories: draftToCategories(draft),
-      reminderOptOut: draft.reminderOptOut,
-    };
-
-    if (editingId) {
-      setRecipients((prev) => prev.map((r) => (r.id === editingId ? payload : r)));
-      setEditingId(null);
-    } else {
-      setRecipients((prev) => [...prev, payload]);
-    }
-
-    setDraft(emptyDraft());
-    setError(null);
-    setDirty(true);
-  };
-
-  const handleSave = async () => {
-    if (!user || !settings) return;
     setSaving(true);
     setError(null);
     setSuccess(null);
     try {
+      const recipients = buildRecipientsFromRoles(houseFather, computerTech, extraRecipients);
       const data = await patchFaultReminderSettings(user, {
         ...settings,
+        enabled: true,
+        instantOnCreate: true,
         recipients,
       });
       setSettings(data.settings);
-      setPreview(data.preview);
-      setRecipients(data.settings.recipients);
+      const split = splitRecipientsByRole(data.settings.recipients);
+      setHouseFather(split.houseFatherContact);
+      setComputerTech(split.computerTechContact);
+      setExtraRecipients(split.extraRecipients);
       setDirty(false);
-      setSuccess('ההגדרות נשמרו בהצלחה');
+      setSuccess('ההגדרות נשמרו — מיילים יישלחו לנמענים שהגדרת');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'שגיאה בשמירה');
     } finally {
@@ -164,29 +128,9 @@ export function EmailSettingsPanel() {
     }
   };
 
-  const handleManualRun = async (dryRun: boolean, force = false) => {
-    if (!user) return;
-    setRunning(dryRun ? 'dry' : force ? 'force' : 'run');
-    setError(null);
-    setSuccess(null);
-    try {
-      const { summary } = await runFaultRemindersManual(user, { dryRun, force });
-      setSuccess(
-        dryRun
-          ? `הרצה יבשה: ${summary.sent} היו נשלחים, ${summary.skipped} דולגו`
-          : `נשלחו ${summary.sent}, דולגו ${summary.skipped}, שגיאות ${summary.errors}`
-      );
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'שגיאה בהרצה');
-    } finally {
-      setRunning(null);
-    }
-  };
-
   const handleTestEmail = async () => {
     if (!user || !testEmailTo.trim()) return;
-    setRunning('test');
+    setRunning(true);
     setError(null);
     setSuccess(null);
     try {
@@ -195,280 +139,222 @@ export function EmailSettingsPanel() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'שגיאה בשליחת מייל בדיקה');
     } finally {
-      setRunning(null);
+      setRunning(false);
     }
   };
 
-  if (loading || !settings) {
+  if (loading) {
     return (
-      <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 flex justify-center">
-        <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+      <div className="bg-white border border-slate-200 rounded-2xl p-12 flex justify-center shadow-sm">
+        <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
       </div>
     );
   }
 
+  if (!settings) {
+    return null;
+  }
+
   return (
-    <div className="bg-slate-800/50 border border-slate-700 rounded-xl p-5 md:p-6 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Mail className="w-5 h-5 text-indigo-400 shrink-0" />
-          <div>
-            <h3 className="font-bold text-white">התראות ותזכורות מייל</h3>
-            <p className="text-xs text-slate-400">
-              מייל מיידי בדיווח חדש + תזכורות יומיות לתקלות פתוחות
-            </p>
+    <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-slate-100 bg-gradient-to-l from-indigo-50 to-white">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center">
+              <Mail className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-slate-800">הגדרות מייל לתקלות חדשות</h2>
+              <p className="text-sm text-slate-500">
+                כאן קובעים למי נשלח מייל בכל פעם שעולה תקלה באתר
+              </p>
+            </div>
+          </div>
+          <div
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold ${
+              settings.enabled
+                ? 'bg-emerald-100 text-emerald-800'
+                : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            {settings.enabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+            {settings.enabled ? 'שליחת מיילים פעילה' : 'שליחת מיילים כבויה'}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => updateLocalSetting('enabled', !settings.enabled)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors shrink-0 ${
-            settings.enabled
-              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-              : 'bg-slate-700 text-slate-400 border border-slate-600'
-          }`}
-        >
-          {settings.enabled ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-          {settings.enabled ? 'מערכת פעילה' : 'מערכת כבויה'}
-        </button>
       </div>
 
-      {error && (
-        <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-300 rounded-lg text-sm">{error}</div>
-      )}
-      {success && (
-        <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 rounded-lg text-sm">
-          {success}
+      <div className="p-6 space-y-6">
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-100 text-red-700 rounded-xl text-sm">{error}</div>
+        )}
+        {success && (
+          <div className="p-3 bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl text-sm">
+            {success}
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="p-5 rounded-2xl border-2 border-amber-100 bg-amber-50/50 space-y-4">
+            <div className="flex items-center gap-2 text-amber-900">
+              <Wrench className="w-5 h-5" />
+              <h3 className="font-bold text-lg">אב הבית</h3>
+            </div>
+            <p className="text-sm text-amber-800/80">
+              מקבל מייל על כל <strong>תקלה כללית</strong> חדשה (אחזקה, חשמל, ניקיון וכו׳)
+            </p>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={houseFather.name}
+                onChange={(e) => {
+                  setHouseFather((v) => ({ ...v, name: e.target.value }));
+                  markDirty();
+                }}
+                placeholder="שם (לדוגמה: הרב פלוני)"
+                className="w-full px-4 py-2.5 bg-white border border-amber-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-amber-400"
+              />
+              <input
+                type="email"
+                value={houseFather.email}
+                onChange={(e) => {
+                  setHouseFather((v) => ({ ...v, email: e.target.value }));
+                  markDirty();
+                }}
+                placeholder="email@zvialod.com"
+                className="w-full px-4 py-2.5 bg-white border border-amber-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-amber-400"
+              />
+            </div>
+          </div>
+
+          <div className="p-5 rounded-2xl border-2 border-violet-100 bg-violet-50/50 space-y-4">
+            <div className="flex items-center gap-2 text-violet-900">
+              <Monitor className="w-5 h-5" />
+              <h3 className="font-bold text-lg">איש המחשבים</h3>
+            </div>
+            <p className="text-sm text-violet-800/80">
+              מקבל מייל על כל <strong>תקלת מחשבים</strong> חדשה (מחשב, רשת, מקרן וכו׳)
+            </p>
+            <div className="space-y-3">
+              <input
+                type="text"
+                value={computerTech.name}
+                onChange={(e) => {
+                  setComputerTech((v) => ({ ...v, name: e.target.value }));
+                  markDirty();
+                }}
+                placeholder="שם (לדוגמה: יוסי הטכנאי)"
+                className="w-full px-4 py-2.5 bg-white border border-violet-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-violet-400"
+              />
+              <input
+                type="email"
+                value={computerTech.email}
+                onChange={(e) => {
+                  setComputerTech((v) => ({ ...v, email: e.target.value }));
+                  markDirty();
+                }}
+                placeholder="tech@zvialod.com"
+                className="w-full px-4 py-2.5 bg-white border border-violet-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:border-violet-400"
+              />
+            </div>
+          </div>
         </div>
-      )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <label className="flex items-center justify-between p-3 bg-slate-900/50 border border-slate-700 rounded-xl cursor-pointer">
-          <span className="text-sm text-slate-200">מייל מיידי בדיווח תקלה חדשה</span>
-          <input
-            type="checkbox"
-            checked={settings.instantOnCreate}
-            onChange={(e) => updateLocalSetting('instantOnCreate', e.target.checked)}
-            className="w-4 h-4"
-          />
-        </label>
-        <label className="flex items-center justify-between p-3 bg-slate-900/50 border border-slate-700 rounded-xl cursor-pointer">
-          <span className="text-sm text-slate-200">תזכורת יומית — תקלה פתוחה מאתמול</span>
-          <input
-            type="checkbox"
-            checked={settings.postDueEnabled}
-            onChange={(e) => updateLocalSetting('postDueEnabled', e.target.checked)}
-            className="w-4 h-4"
-          />
-        </label>
-        <label className="flex items-center justify-between p-3 bg-slate-900/50 border border-slate-700 rounded-xl cursor-pointer">
-          <span className="text-sm text-slate-200">תזכורות לפני (ימים מתאריך הדיווח)</span>
-          <input
-            type="checkbox"
-            checked={settings.preDueReminders.enabled}
-            onChange={(e) =>
-              updateLocalSetting('preDueReminders', {
-                ...settings.preDueReminders,
-                enabled: e.target.checked,
-              })
-            }
-            className="w-4 h-4"
-          />
-        </label>
-        <label className="p-3 bg-slate-900/50 border border-slate-700 rounded-xl">
-          <span className="text-sm text-slate-200 block mb-2">מינימום תקלות לשליחה</span>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={settings.minThreshold}
-            onChange={(e) => updateLocalSetting('minThreshold', Number(e.target.value) || 1)}
-            className="w-full px-3 py-2 bg-slate-800 border border-slate-600 rounded-lg text-white text-sm"
-          />
-        </label>
-      </div>
+        {extraRecipients.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="text-sm font-bold text-slate-600">נמענים נוספים</h4>
+            <ul className="space-y-2">
+              {extraRecipients.map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm"
+                >
+                  <div>
+                    <span className="font-bold text-slate-800">{r.name}</span>
+                    <span className="text-slate-500 mx-2">•</span>
+                    <span className="text-slate-600">{r.email}</span>
+                    <span className="text-indigo-600 mr-2">({recipientCategoriesLabel(r.categories)})</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraRecipients((prev) => prev.filter((x) => x.id !== r.id));
+                      markDirty();
+                    }}
+                    className="p-1.5 text-slate-400 hover:text-red-500"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
-      {settings.preDueReminders.enabled && (
-        <label className="block">
-          <span className="text-sm text-slate-300 mb-2 block">ימים לפני (מופרדים בפסיק, למשל: 7,3,1)</span>
-          <input
-            type="text"
-            value={settings.preDueReminders.daysBefore.join(', ')}
-            onChange={(e) => {
-              const days = e.target.value
-                .split(',')
-                .map((s) => parseInt(s.trim(), 10))
-                .filter((n) => Number.isFinite(n) && n > 0);
-              updateLocalSetting('preDueReminders', {
-                ...settings.preDueReminders,
-                daysBefore: days.length ? days : [7, 3, 1],
-              });
-            }}
-            className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
-          />
-        </label>
-      )}
+        <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="flex items-center justify-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl transition-colors"
+          >
+            {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+            שמירת הגדרות
+          </button>
+        </div>
 
-      {preview && (
-        <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-sm text-indigo-200 grid grid-cols-2 md:grid-cols-3 gap-3">
-          <div>תקלות post-due: <strong>{preview.postDueCount}</strong></div>
-          <div>תקלות pre-due: <strong>{preview.preDueCount}</strong></div>
-          <div>נמענים מתוכננים: <strong>{preview.wouldSend}</strong></div>
-          <div>ידולגו: <strong>{preview.wouldSkip}</strong></div>
-          {settings.lastRunAt && (
-            <div className="col-span-2 md:col-span-3 text-xs text-indigo-300/80">
-              הרצה אחרונה: {new Date(settings.lastRunAt).toLocaleString('he-IL')}
-              {settings.lastRunSummary &&
-                ` — נשלחו ${settings.lastRunSummary.sent}, דולגו ${settings.lastRunSummary.skipped}, שגיאות ${settings.lastRunSummary.errors}`}
+        <div className="border-t border-slate-100 pt-4">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-slate-700"
+          >
+            {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            הגדרות מתקדמות ובדיקות
+          </button>
+
+          {showAdvanced && (
+            <div className="mt-4 space-y-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="email"
+                  value={testEmailTo}
+                  onChange={(e) => setTestEmailTo(e.target.value)}
+                  placeholder="מייל לבדיקה שה-SMTP עובד"
+                  className="flex-1 px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={handleTestEmail}
+                  disabled={running || !testEmailTo.trim()}
+                  className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 text-white text-sm font-bold rounded-lg disabled:opacity-50"
+                >
+                  {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  שליחת מייל בדיקה
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const name = prompt('שם הנמען');
+                  const email = prompt('מייל');
+                  if (!name || !email || !isValidEmail(email)) return;
+                  const cats = prompt('סוגים: general, computer, both', 'both');
+                  const categories: FaultCategory[] =
+                    cats === 'general' ? ['general'] : cats === 'computer' ? ['computer'] : ['general', 'computer'];
+                  setExtraRecipients((prev) => [
+                    ...prev,
+                    { id: createRecipientId(), name, email: email.toLowerCase(), categories },
+                  ]);
+                  markDirty();
+                }}
+                className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800"
+              >
+                <Plus className="w-4 h-4" />
+                הוספת נמען נוסף
+              </button>
             </div>
           )}
         </div>
-      )}
-
-      {recipients.length === 0 ? (
-        <div className="text-center py-6 text-slate-400 text-sm border border-dashed border-slate-600 rounded-xl">
-          <UserPlus className="w-8 h-8 mx-auto mb-2 opacity-50" />
-          לא הוגדרו נמענים.
-        </div>
-      ) : (
-        <ul className="space-y-2">
-          {recipients.map((recipient) => (
-            <li
-              key={recipient.id}
-              className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 bg-slate-900/50 border border-slate-700 rounded-xl"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-white truncate">
-                  {recipient.name}
-                  {recipient.reminderOptOut && (
-                    <span className="mr-2 text-xs text-amber-400">(opt-out)</span>
-                  )}
-                </p>
-                <p className="text-sm text-slate-400 truncate">{recipient.email}</p>
-                <p className="text-xs text-indigo-300 mt-1">
-                  {recipientCategoriesLabel(recipient.categories)}
-                </p>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingId(recipient.id);
-                    setDraft(recipientToDraft(recipient));
-                  }}
-                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-700 text-slate-200 hover:bg-slate-600"
-                >
-                  עריכה
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecipients((prev) => prev.filter((r) => r.id !== recipient.id));
-                    setDirty(true);
-                  }}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-400"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <div className="border-t border-slate-700 pt-5 space-y-4">
-        <h4 className="text-sm font-bold text-slate-300">
-          {editingId ? 'עריכת נמען' : 'הוספת נמען'}
-        </h4>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input
-            type="text"
-            value={draft.name}
-            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-            placeholder="שם"
-            className="px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
-          />
-          <input
-            type="email"
-            value={draft.email}
-            onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
-            placeholder="email@zvialod.com"
-            className="px-3 py-2.5 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
-          />
-        </div>
-        <div className="flex flex-wrap gap-4 text-sm text-slate-300">
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={draft.general} onChange={(e) => setDraft((d) => ({ ...d, general: e.target.checked }))} />
-            תקלות כלליות
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={draft.computer} onChange={(e) => setDraft((d) => ({ ...d, computer: e.target.checked }))} />
-            תקלות מחשבים
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={draft.reminderOptOut} onChange={(e) => setDraft((d) => ({ ...d, reminderOptOut: e.target.checked }))} />
-            לא לשלוח תזכורות (opt-out)
-          </label>
-        </div>
-        <div className="flex gap-2">
-          <button type="button" onClick={handleAddOrUpdate} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-lg">
-            <Plus className="w-4 h-4" />
-            {editingId ? 'עדכון' : 'הוספה'}
-          </button>
-          {editingId && (
-            <button type="button" onClick={() => { setEditingId(null); setDraft(emptyDraft()); }} className="px-4 py-2 bg-slate-700 text-slate-200 text-sm font-bold rounded-lg">
-              ביטול
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="border-t border-slate-700 pt-5 space-y-3">
-        <h4 className="text-sm font-bold text-slate-300">בדיקות והרצות</h4>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <input
-            type="email"
-            value={testEmailTo}
-            onChange={(e) => setTestEmailTo(e.target.value)}
-            placeholder="מייל לבדיקת SMTP"
-            className="flex-1 px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm"
-          />
-          <button
-            type="button"
-            onClick={handleTestEmail}
-            disabled={running !== null || !testEmailTo.trim()}
-            className="flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 text-white text-sm font-bold rounded-lg disabled:opacity-50"
-          >
-            {running === 'test' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            בדיקת SMTP
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => handleManualRun(true)} disabled={running !== null} className="flex items-center gap-2 px-4 py-2 bg-slate-700 text-white text-sm font-bold rounded-lg disabled:opacity-50">
-            {running === 'dry' ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
-            הרצה יבשה
-          </button>
-          <button type="button" onClick={() => handleManualRun(false)} disabled={running !== null} className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm font-bold rounded-lg disabled:opacity-50">
-            {running === 'run' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            הרצת תזכורות
-          </button>
-          <button type="button" onClick={() => handleManualRun(false, true)} disabled={running !== null} className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-white text-sm font-bold rounded-lg disabled:opacity-50">
-            {running === 'force' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            שליחה בכוח
-          </button>
-        </div>
-      </div>
-
-      <div className="flex justify-end pt-2 border-t border-slate-700">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving || !dirty}
-          className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-bold rounded-lg"
-        >
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          שמירת הגדרות
-        </button>
       </div>
     </div>
   );
