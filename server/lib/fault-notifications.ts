@@ -7,8 +7,8 @@ import type {
   ReminderKind,
   SendDecision,
   SkipReason,
-} from '../../shared/notification-types.js';
-import { addDaysToYmd, getIsraelYmd, isActiveFaultStatus, timestampToIsraelYmd } from './timezone.js';
+} from '../../shared/notification-types';
+import { addDaysToYmd, getIsraelYmd, isActiveFaultStatus, timestampToIsraelYmd } from './timezone';
 
 export interface FaultRecord {
   id: string;

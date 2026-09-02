@@ -1,4 +1,4 @@
-import type { FaultNotificationSettings, RunSummary } from '../../shared/notification-types.js';
+import type { FaultNotificationSettings, RunSummary } from '../../shared/notification-types';
 import {
   buildReminderPlans,
   buildReminderRecipients,
@@ -9,12 +9,12 @@ import {
   shouldSendToRecipient,
   updateDedupMapForPlan,
   type FaultRecord,
-} from './fault-notifications.js';
-import { getFaultNotificationSettings, saveFaultNotificationSettingsAfterRun } from './fault-notification-settings.js';
-import { renderFaultNotificationEmail } from './email-template.js';
-import { sendMail } from './mailer.js';
-import { getAdminDb } from './firebase-admin.js';
-import { getIsraelYmd } from './timezone.js';
+} from './fault-notifications';
+import { getFaultNotificationSettings, saveFaultNotificationSettingsAfterRun } from './fault-notification-settings';
+import { renderFaultNotificationEmail } from './email-template';
+import { sendMail } from './mailer';
+import { getAdminDb } from './firebase-admin';
+import { getIsraelYmd } from './timezone';
 
 function emptySummary(dryRun: boolean): RunSummary {
   return { sent: 0, skipped: 0, errors: 0, dryRun, at: new Date().toISOString(), results: [] };
@@ -26,9 +26,14 @@ async function loadActiveFaults(): Promise<FaultRecord[]> {
 }
 
 async function loadFaultById(faultId: string): Promise<FaultRecord | null> {
-  const snap = await getAdminDb().doc(`faults/${faultId}`).get();
-  if (!snap.exists) return null;
-  return { id: snap.id, ...snap.data() } as FaultRecord;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const snap = await getAdminDb().doc(`faults/${faultId}`).get();
+    if (snap.exists) {
+      return { id: snap.id, ...snap.data() } as FaultRecord;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  return null;
 }
 
 function getAppUrl(): string {
@@ -164,7 +169,7 @@ export async function runDailyFaultReminders(options: {
 
 export async function runInstantFaultNotification(
   faultId: string,
-  options: { dryRun?: boolean; force?: boolean } = {}
+  options: { dryRun?: boolean; force?: boolean; fault?: FaultRecord } = {}
 ): Promise<RunSummary> {
   const dryRun = options.dryRun ?? false;
   const force = options.force ?? false;
@@ -174,7 +179,7 @@ export async function runInstantFaultNotification(
     if (!dryRun && !force) return emptySummary(dryRun);
   }
 
-  const fault = await loadFaultById(faultId);
+  const fault = options.fault ?? (await loadFaultById(faultId));
   if (!fault) {
     const summary = emptySummary(dryRun);
     summary.errors = 1;

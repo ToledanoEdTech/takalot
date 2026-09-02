@@ -1,4 +1,4 @@
-import { initializeApp, cert, getApps, type App } from 'firebase-admin/app';
+import { initializeApp, cert, getApps, type App, type ServiceAccount } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import type { VercelRequest } from '@vercel/node';
@@ -6,6 +6,38 @@ import type { VercelRequest } from '@vercel/node';
 const ADMIN_EMAILS = new Set(['yosseftole@zvialod.com', 'yossitole@gmail.com']);
 
 let app: App | undefined;
+
+function parseServiceAccount(raw: string): ServiceAccount {
+  const trimmed = raw.trim().replace(/^\uFEFF/, '');
+  const candidates = [trimmed];
+
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'")) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"'))
+  ) {
+    candidates.push(trimmed.slice(1, -1));
+  }
+
+  try {
+    candidates.push(Buffer.from(trimmed, 'base64').toString('utf8'));
+  } catch {
+    // not base64
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as ServiceAccount & { private_key?: string };
+      if (parsed?.private_key) {
+        parsed.private_key = String(parsed.private_key).replace(/\\n/g, '\n');
+        return parsed;
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is invalid JSON');
+}
 
 function initFirebaseAdmin(): App {
   if (app) return app;
@@ -19,9 +51,8 @@ function initFirebaseAdmin(): App {
     throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON is not configured');
   }
 
-  const serviceAccount = JSON.parse(json);
   app = initializeApp({
-    credential: cert(serviceAccount),
+    credential: cert(parseServiceAccount(json)),
   });
   return app;
 }
@@ -61,7 +92,8 @@ export async function verifyAdminRequest(
       return { ok: false, status: 403, error: 'Admin access required' };
     }
     return { ok: true, email: decoded.email!, uid: decoded.uid };
-  } catch {
-    return { ok: false, status: 401, error: 'Invalid authorization token' };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Invalid authorization token';
+    return { ok: false, status: 401, error: message };
   }
 }

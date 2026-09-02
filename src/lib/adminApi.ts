@@ -60,15 +60,41 @@ export async function sendTestEmail(user: User, to: string): Promise<void> {
   await parseJson(res);
 }
 
-export async function notifyFaultCreated(faultId: string): Promise<void> {
-  try {
-    await fetch('/api/notifications/fault-created', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ faultId }),
-    });
-  } catch (error) {
-    console.warn('Fault notification request failed:', error);
+export async function notifyFaultCreated(
+  faultId: string,
+  fault?: {
+    title: string;
+    description: string;
+    location: string;
+    reporterName: string;
+    category: 'general' | 'computer';
+    status: 'open';
+  }
+): Promise<void> {
+  const res = await fetch('/api/notifications/fault-created', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      faultId,
+      fault: fault
+        ? {
+            id: faultId,
+            ...fault,
+            createdAt: new Date().toISOString(),
+          }
+        : undefined,
+    }),
+  });
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('שרת המייל לא זמין');
+  }
+  const data = (await res.json()) as { error?: string; summary?: { errors?: number; sent?: number } };
+  if (!res.ok) {
+    throw new Error(data.error || 'שליחת המייל נכשלה');
+  }
+  if ((data.summary?.errors ?? 0) > 0 && (data.summary?.sent ?? 0) === 0) {
+    throw new Error('התקלה נשמרה, אבל שליחת המייל נכשלה. בדקו את הגדרות הנמענים וה-SMTP.');
   }
 }
 

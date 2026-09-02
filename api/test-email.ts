@@ -1,40 +1,53 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyAdminRequest } from '../../server/lib/firebase-admin.js';
-import { verifyCronAuth } from '../../server/lib/cron-auth.js';
-import { sendMail, isSmtpConfigured } from '../../server/lib/mailer.js';
-import { renderTestEmail } from '../../server/lib/email-template.js';
+import { verifyAdminRequest } from '../../server/lib/firebase-admin';
+import { verifyCronAuth } from '../../server/lib/cron-auth';
+import { sendMail, isSmtpConfigured } from '../../server/lib/mailer';
+import { renderTestEmail } from '../../server/lib/email-template';
+import { json } from '../../server/lib/http';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const cronOk = verifyCronAuth(req) === null;
-  if (!cronOk) {
-    const admin = await verifyAdminRequest(req);
-    if (!admin.ok) {
-      return res.status(admin.status).json({ error: admin.error });
+  try {
+    if (req.method !== 'GET' && req.method !== 'POST') {
+      return json(res, 405, { error: 'Method not allowed' });
     }
+
+    const cronOk = verifyCronAuth(req) === null;
+    if (!cronOk) {
+      const admin = await verifyAdminRequest(req);
+      if (!admin.ok) {
+        return json(res, admin.status, { error: admin.error });
+      }
+    }
+
+    const toFromQuery = typeof req.query.to === 'string' ? req.query.to.trim() : '';
+    const toFromBody =
+      req.body && typeof req.body === 'object' && 'to' in req.body
+        ? String((req.body as { to?: string }).to || '').trim()
+        : '';
+    const to = toFromQuery || toFromBody;
+    if (!to) {
+      return json(res, 400, { error: 'Missing to query parameter' });
+    }
+
+    if (!isSmtpConfigured()) {
+      return json(res, 500, { error: 'SMTP is not configured (SMTP_USER / SMTP_APP_PASSWORD)' });
+    }
+
+    const appUrl = process.env.APP_URL || 'https://takalot-beige.vercel.app';
+    const email = renderTestEmail(appUrl);
+    const result = await sendMail({ to, ...email });
+
+    if (!result.ok) {
+      return json(res, 500, { error: result.error });
+    }
+
+    return json(res, 200, { ok: true, messageId: result.messageId });
+  } catch (error) {
+    console.error('Test email failed:', error);
+    return json(res, 500, {
+      error: error instanceof Error ? error.message : 'Internal server error',
+    });
   }
-
-  const to = typeof req.query.to === 'string' ? req.query.to.trim() : '';
-  if (!to) {
-    return res.status(400).json({ error: 'Missing to query parameter' });
-  }
-
-  if (!isSmtpConfigured()) {
-    return res.status(500).json({ error: 'SMTP is not configured' });
-  }
-
-  const appUrl = process.env.APP_URL || 'https://takalot-beige.vercel.app';
-  const email = renderTestEmail(appUrl);
-  const result = await sendMail({ to, ...email });
-
-  if (!result.ok) {
-    return res.status(500).json({ error: result.error });
-  }
-
-  return res.status(200).json({ ok: true, messageId: result.messageId });
 }
 
 export const config = {

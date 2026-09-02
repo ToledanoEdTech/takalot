@@ -1,15 +1,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyCronAuth } from '../../server/lib/cron-auth.js';
-import { runDailyFaultReminders } from '../../server/lib/fault-notification-runner.js';
+import { verifyCronAuth } from '../../server/lib/cron-auth';
+import { runDailyFaultReminders } from '../../server/lib/fault-notification-runner';
+import { json } from '../../server/lib/http';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return json(res, 405, { error: 'Method not allowed' });
   }
 
   const authError = verifyCronAuth(req);
   if (authError) {
-    return res.status(authError.status).json({ error: authError.error });
+    return json(res, authError.status, { error: authError.error });
   }
 
   const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
@@ -17,10 +18,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const summary = await runDailyFaultReminders({ dryRun, force });
-    return res.status(200).json({ ok: true, summary });
+    return json(res, 200, { ok: true, summary });
   } catch (error) {
     console.error('Cron fault reminders failed:', error);
-    return res.status(500).json({
+    return json(res, 500, {
       error: error instanceof Error ? error.message : 'Internal server error',
     });
   }

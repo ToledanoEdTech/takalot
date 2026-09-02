@@ -73,7 +73,18 @@ export function FaultForm({ onClose }: FaultFormProps) {
       }
 
       await setDoc(newRef, payload);
-      void notifyFaultCreated(newRef.id);
+      try {
+        await notifyFaultCreated(newRef.id, {
+          title: title.trim(),
+          description: description.trim(),
+          location: location.trim(),
+          reporterName: reporterName.trim(),
+          category,
+          status: 'open',
+        });
+      } catch (notifyError) {
+        console.warn('Fault email notification failed:', notifyError);
+      }
       onClose();
     } catch (err) {
       try {

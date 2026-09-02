@@ -4,8 +4,9 @@ import {
   LEGACY_NOTIFICATION_SETTINGS_DOC,
   normalizeSettings,
   type FaultNotificationSettings,
-} from '../../shared/notification-types.js';
-import { getAdminDb } from './firebase-admin.js';
+} from '../../shared/notification-types';
+import { getAdminDb } from './firebase-admin';
+import { omitUndefined } from './http';
 
 export async function getFaultNotificationSettings(): Promise<FaultNotificationSettings> {
   const db = getAdminDb();
@@ -35,7 +36,7 @@ export async function updateFaultNotificationSettings(
 ): Promise<FaultNotificationSettings> {
   const current = await getFaultNotificationSettings();
   const next = normalizeSettings({ ...current, ...patch });
-  await getAdminDb().doc(FAULT_NOTIFICATION_SETTINGS_DOC).set(next, { merge: false });
+  await getAdminDb().doc(FAULT_NOTIFICATION_SETTINGS_DOC).set(omitUndefined(next), { merge: false });
   return next;
 }
 
@@ -50,5 +51,5 @@ export async function saveFaultNotificationSettingsAfterRun(
     lastRunSummary: summary,
     lastSentByRecipient: dedupMap,
   };
-  await getAdminDb().doc(FAULT_NOTIFICATION_SETTINGS_DOC).set(next, { merge: false });
+  await getAdminDb().doc(FAULT_NOTIFICATION_SETTINGS_DOC).set(omitUndefined(next), { merge: false });
 }

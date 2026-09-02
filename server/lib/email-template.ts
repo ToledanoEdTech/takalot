@@ -1,5 +1,5 @@
-import type { ReminderFaultItem, ReminderKind } from '../../shared/notification-types.js';
-import { categoryLabel } from '../../shared/notification-types.js';
+import type { ReminderFaultItem, ReminderKind } from '../../shared/notification-types';
+import { categoryLabel } from '../../shared/notification-types';
 
 const MAX_ITEMS_IN_BODY = 5;
 

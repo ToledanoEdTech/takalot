@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyAdminRequest } from '../../server/lib/firebase-admin.js';
+import { getAdminDb, verifyAdminRequest } from '../../server/lib/firebase-admin';
 import {
   getFaultNotificationSettings,
   updateFaultNotificationSettings,
-} from '../../server/lib/fault-notification-settings.js';
-import { previewDailyRun } from '../../server/lib/fault-notifications.js';
-import { runDailyFaultReminders, runInstantFaultNotification } from '../../server/lib/fault-notification-runner.js';
-import { getAdminDb } from '../../server/lib/firebase-admin.js';
-import { normalizeSettings, type FaultNotificationSettings } from '../../shared/notification-types.js';
+} from '../../server/lib/fault-notification-settings';
+import { previewDailyRun } from '../../server/lib/fault-notifications';
+import { runDailyFaultReminders, runInstantFaultNotification } from '../../server/lib/fault-notification-runner';
+import { json, parseBody } from '../../server/lib/http';
+import { normalizeSettings, type FaultNotificationSettings } from '../../shared/notification-types';
 
 async function loadFaultsForPreview() {
   const snapshot = await getAdminDb()
@@ -18,53 +18,53 @@ async function loadFaultsForPreview() {
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const admin = await verifyAdminRequest(req);
-  if (!admin.ok) {
-    return res.status(admin.status).json({ error: admin.error });
-  }
-
   try {
+    const admin = await verifyAdminRequest(req);
+    if (!admin.ok) {
+      return json(res, admin.status, { error: admin.error });
+    }
+
     if (req.method === 'GET') {
       const settings = await getFaultNotificationSettings();
       const faults = await loadFaultsForPreview();
       const preview = previewDailyRun(faults, settings);
-      return res.status(200).json({ settings, preview });
+      return json(res, 200, { settings, preview });
     }
 
     if (req.method === 'PATCH') {
-      const body = (req.body ?? {}) as Partial<FaultNotificationSettings>;
+      const body = parseBody<Partial<FaultNotificationSettings>>(req);
       const current = await getFaultNotificationSettings();
       const next = await updateFaultNotificationSettings(
         normalizeSettings({ ...current, ...body })
       );
       const faults = await loadFaultsForPreview();
       const preview = previewDailyRun(faults, next);
-      return res.status(200).json({ settings: next, preview });
+      return json(res, 200, { settings: next, preview });
     }
 
     if (req.method === 'POST') {
-      const body = (req.body ?? {}) as {
+      const body = parseBody<{
         dryRun?: boolean;
         force?: boolean;
         mode?: 'daily' | 'instant';
         faultId?: string;
-      };
+      }>(req);
       const dryRun = Boolean(body.dryRun);
       const force = Boolean(body.force);
 
       if (body.mode === 'instant' && body.faultId) {
         const summary = await runInstantFaultNotification(body.faultId, { dryRun, force });
-        return res.status(200).json({ ok: true, summary });
+        return json(res, 200, { ok: true, summary });
       }
 
       const summary = await runDailyFaultReminders({ dryRun, force });
-      return res.status(200).json({ ok: true, summary });
+      return json(res, 200, { ok: true, summary });
     }
 
-    return res.status(405).json({ error: 'Method not allowed' });
+    return json(res, 405, { error: 'Method not allowed' });
   } catch (error) {
     console.error('Settings API failed:', error);
-    return res.status(500).json({
+    return json(res, 500, {
       error: error instanceof Error ? error.message : 'Internal server error',
     });
   }

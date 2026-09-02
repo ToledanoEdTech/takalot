@@ -67,7 +67,7 @@ export function EmailSettingsPanel() {
       setExtraRecipients([]);
       setError(
         err instanceof Error
-          ? `${err.message} — בפיתוח מקומי הריצו: npx vercel dev`
+          ? err.message
           : 'שגיאה בטעינת ההגדרות'
       );
     } finally {
