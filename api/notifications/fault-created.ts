@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { runInstantFaultNotification } from '../../server/lib/fault-notification-runner';
-import type { FaultRecord } from '../../server/lib/fault-notifications';
-import { json, parseBody } from '../../server/lib/http';
+import { runInstantFaultNotification } from '../_lib/fault-notification-runner';
+import type { FaultRecord } from '../_lib/fault-notifications';
+import { json, parseBody } from '../_lib/http';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {

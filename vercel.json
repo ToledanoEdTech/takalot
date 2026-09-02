@@ -4,8 +4,7 @@
   "framework": "vite",
   "functions": {
     "api/**/*.ts": {
-      "maxDuration": 60,
-      "includeFiles": "server/**"
+      "maxDuration": 60
     }
   },
   "crons": [

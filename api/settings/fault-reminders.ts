@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAdminDb, verifyAdminRequest } from '../../server/lib/firebase-admin';
+import { getAdminDb, verifyAdminRequest } from '../_lib/firebase-admin';
 import {
   getFaultNotificationSettings,
   updateFaultNotificationSettings,
-} from '../../server/lib/fault-notification-settings';
-import { previewDailyRun } from '../../server/lib/fault-notifications';
-import { runDailyFaultReminders, runInstantFaultNotification } from '../../server/lib/fault-notification-runner';
-import { json, parseBody } from '../../server/lib/http';
-import { normalizeSettings, type FaultNotificationSettings } from '../../shared/notification-types';
+} from '../_lib/fault-notification-settings';
+import { previewDailyRun } from '../_lib/fault-notifications';
+import { runDailyFaultReminders, runInstantFaultNotification } from '../_lib/fault-notification-runner';
+import { json, parseBody } from '../_lib/http';
+import { normalizeSettings, type FaultNotificationSettings } from '../_lib/notification-types';
 
 async function loadFaultsForPreview() {
   const snapshot = await getAdminDb()
