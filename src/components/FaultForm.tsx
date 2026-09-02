@@ -84,6 +84,12 @@ export function FaultForm({ onClose }: FaultFormProps) {
         });
       } catch (notifyError) {
         console.warn('Fault email notification failed:', notifyError);
+        setError(
+          notifyError instanceof Error
+            ? `התקלה נשמרה, אבל המייל לא נשלח: ${notifyError.message}`
+            : 'התקלה נשמרה, אבל שליחת המייל נכשלה.'
+        );
+        return;
       }
       onClose();
     } catch (err) {

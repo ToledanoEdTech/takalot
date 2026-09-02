@@ -38,7 +38,7 @@ export const DEFAULT_FAULT_NOTIFICATION_SETTINGS: FaultNotificationSettings = {
   enabled: true,
   instantOnCreate: true,
   minThreshold: 1,
-  postDueEnabled: true,
+  postDueEnabled: false,
   preDueReminders: {
     enabled: false,
     daysBefore: [7, 3, 1],

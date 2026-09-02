@@ -89,12 +89,21 @@ export async function notifyFaultCreated(
   if (!contentType.includes('application/json')) {
     throw new Error('שרת המייל לא זמין');
   }
-  const data = (await res.json()) as { error?: string; summary?: { errors?: number; sent?: number } };
+  const data = (await res.json()) as {
+    error?: string;
+    summary?: { errors?: number; sent?: number; results?: { recipientEmail?: string; error?: string }[] };
+  };
   if (!res.ok) {
     throw new Error(data.error || 'שליחת המייל נכשלה');
   }
   if ((data.summary?.errors ?? 0) > 0 && (data.summary?.sent ?? 0) === 0) {
-    throw new Error('התקלה נשמרה, אבל שליחת המייל נכשלה. בדקו את הגדרות הנמענים וה-SMTP.');
+    throw new Error(
+      data.summary?.results?.find((entry) => entry.error)?.error ||
+        'התקלה נשמרה, אבל שליחת המייל נכשלה. בדקו את הגדרות הנמענים וה-SMTP.'
+    );
+  }
+  if ((data.summary?.sent ?? 0) === 0) {
+    throw new Error('התקלה נשמרה, אבל לא נמצא נמען מתאים לשליחת המייל.');
   }
 }
 

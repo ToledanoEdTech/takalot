@@ -10,6 +10,7 @@ import {
   Wrench,
   Monitor,
   Send,
+  Clock,
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
@@ -289,6 +290,43 @@ export function EmailSettingsPanel() {
             </ul>
           </div>
         )}
+
+        <div className="p-5 rounded-2xl border-2 border-slate-200 bg-slate-50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center shrink-0">
+              <Clock className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h3 className="font-bold text-slate-800">מייל יומי ב־08:00</h3>
+              <p className="text-sm text-slate-600 mt-1">
+                כל בוקר יישלח מייל על תקלות שעדיין פתוחות מאתמול. מייל על תקלה חדשה נשלח תמיד, בנפרד מהתזכורת הזו.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <button
+            type="button"
+            role="switch"
+            aria-checked={settings.postDueEnabled}
+            onClick={() => {
+              setSettings((prev) => (prev ? { ...prev, postDueEnabled: !prev.postDueEnabled } : prev));
+              markDirty();
+            }}
+            className={`inline-flex h-8 w-14 shrink-0 p-1 rounded-full transition-colors ${
+              settings.postDueEnabled ? 'bg-indigo-600' : 'bg-slate-300'
+            }`}
+          >
+            <span
+              className={`h-6 w-6 rounded-full bg-white shadow transition-all ${
+                settings.postDueEnabled ? 'ml-auto' : ''
+              }`}
+            />
+          </button>
+          <span className={`text-sm font-bold ${settings.postDueEnabled ? 'text-indigo-700' : 'text-slate-500'}`}>
+            {settings.postDueEnabled ? 'פעיל' : 'כבוי'}
+          </span>
+          </div>
+        </div>
 
         <div className="flex flex-col sm:flex-row gap-3 pt-2">
           <button

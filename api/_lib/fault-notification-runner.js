@@ -108,8 +108,9 @@ export async function runDailyFaultReminders(options = {}) {
   const dryRun = options.dryRun ?? false;
   const force = options.force ?? false;
   const settings = await getFaultNotificationSettings();
+  const dailyEnabled = Boolean(settings.postDueEnabled || settings.preDueReminders?.enabled);
 
-  if (!settings.enabled && !dryRun && !force) {
+  if (!dailyEnabled && !dryRun && !force) {
     return emptySummary(dryRun);
   }
 
@@ -128,7 +129,7 @@ export async function runDailyFaultReminders(options = {}) {
     dryRun,
     force,
     today,
-    globalEnabled: settings.enabled,
+    globalEnabled: dailyEnabled,
   });
 
   if (!dryRun) {
@@ -150,16 +151,30 @@ export async function runDailyFaultReminders(options = {}) {
 
 export async function runInstantFaultNotification(faultId, options = {}) {
   const dryRun = options.dryRun ?? false;
-  const force = options.force ?? false;
   const settings = await getFaultNotificationSettings();
+  const summary = emptySummary(dryRun);
 
   if (!settings.enabled || !settings.instantOnCreate) {
-    if (!dryRun && !force) return emptySummary(dryRun);
+    summary.skipped = 1;
+    summary.results.push({
+      recipientId: 'system',
+      recipientEmail: '',
+      skipped: 'inactive',
+      error: 'שליחת מייל על תקלה חדשה כבויה בהגדרות',
+    });
+    return summary;
   }
 
-  const fault = options.fault ?? (await loadFaultById(faultId));
-  if (!fault) {
-    const summary = emptySummary(dryRun);
+  const fromClient = options.fault && typeof options.fault === 'object' ? options.fault : null;
+  const fromDb = fromClient?.title ? null : await loadFaultById(faultId);
+  const fault = {
+    ...(fromDb || {}),
+    ...(fromClient || {}),
+    id: faultId,
+    category: fromClient?.category || fromDb?.category || 'general',
+  };
+
+  if (!fromDb && !fromClient) {
     summary.errors = 1;
     summary.results.push({
       recipientId: 'system',
@@ -170,23 +185,66 @@ export async function runInstantFaultNotification(faultId, options = {}) {
   }
 
   const item = mapFaultToInstantItem(fault);
-  if (!item) {
-    return emptySummary(dryRun);
-  }
-
-  const today = getIsraelYmd();
-  const recipients = buildReminderRecipients(settings.recipients);
-  const plans = buildReminderPlans([item], recipients);
-
-  const { summary, dedupMap } = await executePlans(settings, plans, {
-    dryRun,
-    force,
-    today,
-    globalEnabled: settings.enabled && settings.instantOnCreate,
+  const recipients = buildReminderRecipients(settings.recipients).filter((recipient) => {
+    const categories = Array.isArray(recipient.categories) ? recipient.categories : [];
+    return categories.includes(item.category);
   });
 
-  if (!dryRun && summary.sent > 0) {
-    await saveFaultNotificationSettingsAfterRun(settings, settings.lastRunSummary, dedupMap);
+  if (recipients.length === 0) {
+    summary.errors = 1;
+    summary.results.push({
+      recipientId: 'system',
+      recipientEmail: '',
+      error:
+        item.category === 'computer'
+          ? 'אין נמען מוגדר לתקלות מחשבים'
+          : 'אין נמען מוגדר לתקלות כלליות',
+    });
+    return summary;
+  }
+
+  for (const recipient of recipients) {
+    const personalized = renderFaultNotificationEmail({
+      recipientName: recipient.name,
+      items: [item],
+      appUrl: getAppUrl(),
+    });
+
+    if (dryRun) {
+      summary.sent += 1;
+      summary.results.push({
+        recipientId: recipient.id,
+        recipientEmail: recipient.email,
+        sent: true,
+        itemCount: 1,
+      });
+      continue;
+    }
+
+    const result = await sendMail({
+      to: recipient.email,
+      subject: personalized.subject,
+      html: personalized.html,
+      text: personalized.text,
+    });
+
+    if (result.ok) {
+      summary.sent += 1;
+      summary.results.push({
+        recipientId: recipient.id,
+        recipientEmail: recipient.email,
+        sent: true,
+        itemCount: 1,
+      });
+    } else {
+      summary.errors += 1;
+      summary.results.push({
+        recipientId: recipient.id,
+        recipientEmail: recipient.email,
+        error: result.error,
+        itemCount: 1,
+      });
+    }
   }
 
   return summary;

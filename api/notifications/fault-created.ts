@@ -14,6 +14,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     const summary = await runInstantFaultNotification(body.faultId, { fault: body.fault });
+    console.log('Instant fault notification summary', JSON.stringify(summary));
+    if ((summary.sent ?? 0) === 0) {
+      const detail =
+        summary.results?.find((entry: { error?: string }) => entry.error)?.error ||
+        'לא נשלח מייל לנמען המתאים';
+      return json(res, 500, { error: detail, summary });
+    }
     return json(res, 200, { ok: true, summary });
   } catch (error) {
     console.error('Instant fault notification failed:', error);

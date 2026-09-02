@@ -13,6 +13,7 @@ export function parseBody(req) {
 
 export function json(res, status, payload) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
   return res.status(status).json(payload);
 }
 

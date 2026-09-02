@@ -78,7 +78,8 @@ export function buildReminderPlans(items, recipients) {
   const plans = [];
 
   for (const recipient of recipients) {
-    const matched = items.filter((item) => recipient.categories.includes(item.category));
+    const categories = Array.isArray(recipient.categories) ? recipient.categories : [];
+    const matched = items.filter((item) => categories.includes(item.category));
     if (matched.length === 0) continue;
     plans.push({ recipient, items: matched });
   }
