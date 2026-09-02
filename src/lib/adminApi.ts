@@ -70,7 +70,7 @@ export async function notifyFaultCreated(
     category: 'general' | 'computer';
     status: 'open';
   }
-): Promise<void> {
+): Promise<string[]> {
   const res = await fetch('/api/notifications/fault-created', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -91,20 +91,21 @@ export async function notifyFaultCreated(
   }
   const data = (await res.json()) as {
     error?: string;
-    summary?: { errors?: number; sent?: number; results?: { recipientEmail?: string; error?: string }[] };
+    summary?: { errors?: number; sent?: number; results?: { recipientEmail?: string; error?: string; sent?: boolean }[] };
   };
   if (!res.ok) {
     throw new Error(data.error || 'שליחת המייל נכשלה');
   }
-  if ((data.summary?.errors ?? 0) > 0 && (data.summary?.sent ?? 0) === 0) {
+  const sentTo = (data.summary?.results ?? [])
+    .filter((entry) => entry.sent && entry.recipientEmail)
+    .map((entry) => entry.recipientEmail) as string[];
+  if ((data.summary?.sent ?? 0) === 0 || sentTo.length === 0) {
     throw new Error(
       data.summary?.results?.find((entry) => entry.error)?.error ||
-        'התקלה נשמרה, אבל שליחת המייל נכשלה. בדקו את הגדרות הנמענים וה-SMTP.'
+        'התקלה נשמרה, אבל לא נמצא נמען מתאים לשליחת המייל.'
     );
   }
-  if ((data.summary?.sent ?? 0) === 0) {
-    throw new Error('התקלה נשמרה, אבל לא נמצא נמען מתאים לשליחת המייל.');
-  }
+  return sentTo;
 }
 
 export function createRecipientId(): string {

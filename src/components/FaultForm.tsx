@@ -21,6 +21,7 @@ export function FaultForm({ onClose }: FaultFormProps) {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -74,7 +75,7 @@ export function FaultForm({ onClose }: FaultFormProps) {
 
       await setDoc(newRef, payload);
       try {
-        await notifyFaultCreated(newRef.id, {
+        const sentTo = await notifyFaultCreated(newRef.id, {
           title: title.trim(),
           description: description.trim(),
           location: location.trim(),
@@ -82,6 +83,8 @@ export function FaultForm({ onClose }: FaultFormProps) {
           category,
           status: 'open',
         });
+        setSuccess(`התקלה נשמרה ונשלח מייל אל ${sentTo.join(', ')}`);
+        window.setTimeout(() => onClose(), 2500);
       } catch (notifyError) {
         console.warn('Fault email notification failed:', notifyError);
         setError(
@@ -89,9 +92,7 @@ export function FaultForm({ onClose }: FaultFormProps) {
             ? `התקלה נשמרה, אבל המייל לא נשלח: ${notifyError.message}`
             : 'התקלה נשמרה, אבל שליחת המייל נכשלה.'
         );
-        return;
       }
-      onClose();
     } catch (err) {
       try {
         handleFirestoreError(err, OperationType.CREATE, 'faults');
@@ -125,6 +126,11 @@ export function FaultForm({ onClose }: FaultFormProps) {
           {error && (
             <div className="p-3 bg-red-50 text-red-700 rounded-xl text-sm font-medium border border-red-100">
               {error}
+            </div>
+          )}
+          {success && (
+            <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl text-sm font-medium border border-emerald-100">
+              {success}
             </div>
           )}
 

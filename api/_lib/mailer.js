@@ -17,7 +17,7 @@ function getSmtpConfig() {
     throw new Error('SMTP_USER and SMTP_APP_PASSWORD must be configured');
   }
 
-  return { user, pass, from };
+  return { user, pass, from: from || user };
 }
 
 export async function sendMail(input) {
@@ -31,14 +31,41 @@ export async function sendMail(input) {
     });
 
     const info = await transport.sendMail({
-      from: `"מערכת תקלות ישיבת צביה" <${from}>`,
+      from: {
+        name: 'מערכת תקלות ישיבת צביה',
+        address: user,
+      },
+      replyTo: from || user,
       to: input.to,
       subject: input.subject,
       html: input.html,
       text: input.text,
+      envelope: {
+        from: user,
+        to: [input.to],
+      },
     });
 
-    return { ok: true, messageId: info.messageId };
+    const accepted = (info.accepted || []).map((entry) => (typeof entry === 'string' ? entry : entry.address));
+    console.log(
+      'SMTP send',
+      JSON.stringify({
+        to: input.to,
+        accepted,
+        rejected: info.rejected,
+        response: info.response,
+        messageId: info.messageId,
+      })
+    );
+
+    if (accepted.length === 0) {
+      return {
+        ok: false,
+        error: `Gmail did not accept the recipient (${info.response || 'no SMTP response'})`,
+      };
+    }
+
+    return { ok: true, messageId: info.messageId, accepted };
   } catch (error) {
     return {
       ok: false,

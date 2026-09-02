@@ -2,6 +2,15 @@ import { categoryLabel } from './notification-types.js';
 
 const MAX_ITEMS_IN_BODY = 5;
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function kindLabel(kind, daysBefore) {
   if (kind === 'instant') return 'תקלה חדשה';
   if (kind === 'post-due') return 'תזכורת — תקלה פתוחה מאתמול';
@@ -22,10 +31,10 @@ function renderItemsHtml(items) {
     .map(
       (item) => `
       <tr>
-        <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:bold;">${item.title}</td>
-        <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${categoryLabel(item.category)}</td>
-        <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${item.location}</td>
-        <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${statusLabel(item.status)}</td>
+        <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:bold;">${escapeHtml(item.title)}</td>
+        <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(categoryLabel(item.category))}</td>
+        <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(item.location)}</td>
+        <td style="padding:10px;border-bottom:1px solid #e2e8f0;">${escapeHtml(statusLabel(item.status))}</td>
       </tr>`
     )
     .join('');
@@ -69,13 +78,13 @@ export function renderFaultNotificationEmail(input) {
 
   const subject =
     primaryKind === 'instant'
-      ? `[תקלה חדשה] ${input.items[0]?.title ?? 'דיווח חדש'}`
-      : `[תזכורת תקלות] ${count} תקלות ממתינות לטיפול`;
+      ? `תקלה חדשה: ${input.items[0]?.title ?? 'דיווח חדש'}`
+      : `תזכורת: ${count} תקלות ממתינות לטיפול`;
 
   const html = `
     <div dir="rtl" style="font-family:Arial,sans-serif;max-width:640px;margin:0 auto;color:#0f172a;">
-      <h2 style="color:#4338ca;margin-bottom:8px;">${kindText}</h2>
-      <p style="color:#475569;">שלום ${input.recipientName},</p>
+      <h2 style="color:#4338ca;margin-bottom:8px;">${escapeHtml(kindText)}</h2>
+      <p style="color:#475569;">שלום ${escapeHtml(input.recipientName)},</p>
       <p style="color:#475569;">${count === 1 ? 'יש תקלה אחת' : `יש ${count} תקלות`} שדורשות את תשומת לבך:</p>
       ${renderItemsHtml(input.items)}
       <p style="margin-top:24px;">
