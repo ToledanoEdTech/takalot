@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { verifyCronAuth } from './_lib/cron-auth';
+import { verifyCronAuth } from './_lib/cron-auth.js';
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   const auth = verifyCronAuth(req);

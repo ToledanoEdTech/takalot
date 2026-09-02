@@ -1,6 +1,4 @@
-import type { VercelRequest } from '@vercel/node';
-
-export function verifyCronAuth(req: VercelRequest): { status: number; error: string } | null {
+export function verifyCronAuth(req) {
   const secret = process.env.CRON_SECRET;
   const isProd = process.env.NODE_ENV === 'production' || process.env.VERCEL === '1';
 
@@ -16,9 +14,4 @@ export function verifyCronAuth(req: VercelRequest): { status: number; error: str
   }
 
   return null;
-}
-
-export function hasCronOrAdminBypass(req: VercelRequest): boolean {
-  if (!verifyCronAuth(req)) return true;
-  return false;
 }
