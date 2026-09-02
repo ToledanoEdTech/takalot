@@ -9,9 +9,9 @@ function getCreateTransport() {
 }
 
 function getSmtpConfig() {
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS;
-  const from = process.env.MAIL_FROM || user;
+  const user = process.env.SMTP_USER?.trim();
+  const pass = (process.env.SMTP_APP_PASSWORD || process.env.SMTP_PASS || '').replace(/\s+/g, '');
+  const from = (process.env.MAIL_FROM || user || '').trim();
 
   if (!user || !pass) {
     throw new Error('SMTP_USER and SMTP_APP_PASSWORD must be configured');
